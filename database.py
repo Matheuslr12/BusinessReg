@@ -11,6 +11,11 @@ def get_connection():
     return conn
 
 
+def column_exists(cursor, table_name, column_name):
+    cursor.execute(f'PRAGMA table_info({table_name})')
+    return any(column['name'] == column_name for column in cursor.fetchall())
+
+
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
@@ -40,10 +45,14 @@ def init_db():
             nome TEXT NOT NULL,
             tipo TEXT NOT NULL DEFAULT 'Texto',
             obrigatorio INTEGER NOT NULL DEFAULT 0,
+            ordem INTEGER NOT NULL DEFAULT 0,
             data_cadastro TEXT NOT NULL,
             FOREIGN KEY (categoria_id) REFERENCES categorias(id)
         )
     ''')
+
+    if not column_exists(cursor, 'campos', 'ordem'):
+        cursor.execute('ALTER TABLE campos ADD COLUMN ordem INTEGER NOT NULL DEFAULT 0')
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS valores_campos (
@@ -57,6 +66,18 @@ def init_db():
             FOREIGN KEY (campo_id) REFERENCES campos(id) ON DELETE CASCADE
         )
     ''')
+
+    cursor.execute('SELECT id, categoria_id FROM campos WHERE ordem = 0 ORDER BY categoria_id, id')
+    campos_sem_ordem = cursor.fetchall()
+    current_category = None
+    position = 0
+    for campo in campos_sem_ordem:
+        if campo['categoria_id'] != current_category:
+            current_category = campo['categoria_id']
+            cursor.execute('SELECT COALESCE(MAX(ordem), 0) AS max_ordem FROM campos WHERE categoria_id = ?', (current_category,))
+            position = cursor.fetchone()['max_ordem']
+        position += 1
+        cursor.execute('UPDATE campos SET ordem = ? WHERE id = ?', (position, campo['id']))
 
     conn.commit()
     conn.close()
@@ -177,10 +198,12 @@ def delete_categoria(categoria_id):
 def create_campo(categoria_id, nome):
     conn = get_connection()
     cursor = conn.cursor()
+    cursor.execute('SELECT COALESCE(MAX(ordem), 0) + 1 AS proxima_ordem FROM campos WHERE categoria_id = ?', (categoria_id,))
+    ordem = cursor.fetchone()['proxima_ordem']
     cursor.execute(
-        '''INSERT INTO campos (categoria_id, nome, tipo, obrigatorio, data_cadastro)
-           VALUES (?, ?, 'Texto', 0, ?)''',
-        (categoria_id, nome.strip(), datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        '''INSERT INTO campos (categoria_id, nome, tipo, obrigatorio, ordem, data_cadastro)
+           VALUES (?, ?, 'Texto', 0, ?, ?)''',
+        (categoria_id, nome.strip(), ordem, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     )
     campo_id = cursor.lastrowid
     conn.commit()
@@ -191,7 +214,7 @@ def create_campo(categoria_id, nome):
 def get_campo(campo_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute('SELECT id, categoria_id, nome, data_cadastro FROM campos WHERE id = ?', (campo_id,))
+    cursor.execute('SELECT id, categoria_id, nome, ordem, data_cadastro FROM campos WHERE id = ?', (campo_id,))
     campo = cursor.fetchone()
     conn.close()
     return campo
@@ -203,21 +226,21 @@ def list_campos(search=''):
     if search.strip():
         termo = f'%{search.strip()}%'
         cursor.execute(
-            '''SELECT campos.id, campos.categoria_id, campos.nome,
+            '''SELECT campos.id, campos.categoria_id, campos.nome, campos.ordem,
                       categorias.nome AS categoria_nome
                FROM campos
                INNER JOIN categorias ON categorias.id = campos.categoria_id
                WHERE campos.nome LIKE ? OR categorias.nome LIKE ?
-               ORDER BY categorias.nome COLLATE NOCASE, campos.nome COLLATE NOCASE''',
+               ORDER BY categorias.nome COLLATE NOCASE, campos.ordem, campos.id''',
             (termo, termo)
         )
     else:
         cursor.execute(
-            '''SELECT campos.id, campos.categoria_id, campos.nome,
+            '''SELECT campos.id, campos.categoria_id, campos.nome, campos.ordem,
                       categorias.nome AS categoria_nome
                FROM campos
                INNER JOIN categorias ON categorias.id = campos.categoria_id
-               ORDER BY categorias.nome COLLATE NOCASE, campos.nome COLLATE NOCASE'''
+               ORDER BY categorias.nome COLLATE NOCASE, campos.ordem, campos.id'''
         )
     campos = cursor.fetchall()
     conn.close()
@@ -228,8 +251,8 @@ def list_campos_por_categoria(categoria_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        '''SELECT id, categoria_id, nome FROM campos
-           WHERE categoria_id = ? ORDER BY nome COLLATE NOCASE''',
+        '''SELECT id, categoria_id, nome, ordem FROM campos
+           WHERE categoria_id = ? ORDER BY ordem, id''',
         (categoria_id,)
     )
     campos = cursor.fetchall()
@@ -240,9 +263,46 @@ def list_campos_por_categoria(categoria_id):
 def update_campo(campo_id, categoria_id, nome):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute('UPDATE campos SET categoria_id = ?, nome = ? WHERE id = ?', (categoria_id, nome.strip(), campo_id))
+    cursor.execute('SELECT categoria_id FROM campos WHERE id = ?', (campo_id,))
+    campo_atual = cursor.fetchone()
+    if campo_atual and campo_atual['categoria_id'] != categoria_id:
+        cursor.execute('SELECT COALESCE(MAX(ordem), 0) + 1 AS proxima_ordem FROM campos WHERE categoria_id = ?', (categoria_id,))
+        nova_ordem = cursor.fetchone()['proxima_ordem']
+        cursor.execute('UPDATE campos SET categoria_id = ?, nome = ?, ordem = ? WHERE id = ?', (categoria_id, nome.strip(), nova_ordem, campo_id))
+    else:
+        cursor.execute('UPDATE campos SET nome = ? WHERE id = ?', (nome.strip(), campo_id))
     conn.commit()
     conn.close()
+
+
+def move_campo(campo_id, direction):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, categoria_id, ordem FROM campos WHERE id = ?', (campo_id,))
+    campo = cursor.fetchone()
+    if not campo:
+        conn.close()
+        return False
+
+    operator = '<' if direction == 'up' else '>'
+    order_by = 'DESC' if direction == 'up' else 'ASC'
+    cursor.execute(
+        f'''SELECT id, ordem FROM campos
+            WHERE categoria_id = ? AND ordem {operator} ?
+            ORDER BY ordem {order_by}, id {order_by}
+            LIMIT 1''',
+        (campo['categoria_id'], campo['ordem'])
+    )
+    neighbor = cursor.fetchone()
+    if not neighbor:
+        conn.close()
+        return False
+
+    cursor.execute('UPDATE campos SET ordem = ? WHERE id = ?', (neighbor['ordem'], campo['id']))
+    cursor.execute('UPDATE campos SET ordem = ? WHERE id = ?', (campo['ordem'], neighbor['id']))
+    conn.commit()
+    conn.close()
+    return True
 
 
 def delete_campo(campo_id):

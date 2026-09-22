@@ -7,6 +7,7 @@ from database import (
     get_campo,
     list_campos,
     list_categorias,
+    move_campo,
     update_campo,
 )
 
@@ -21,7 +22,7 @@ class CamposView(tk.Frame):
         self.configure(bg=colors['bg_primary'])
         self.selected_field = None
         self.field_buttons = {}
-        self.category_groups = {}
+        self.field_data = {}
         self.expanded_categories = set()
         self.configure_combo_style()
         self.create_widgets()
@@ -68,7 +69,7 @@ class CamposView(tk.Frame):
         ).pack(anchor='w', pady=(28, 4))
         tk.Label(
             header,
-            text='Organize os campos por categoria para usar nos cadastros das empresas.',
+            text='Organize os campos por categoria e defina a ordem de preenchimento.',
             font=('Segoe UI', 10), fg=self.colors['text_secondary'],
             bg=self.colors['bg_primary']
         ).pack(anchor='w', pady=(0, 22))
@@ -100,46 +101,42 @@ class CamposView(tk.Frame):
         ).pack(side='right')
 
     def create_groups_area(self, parent):
-        self.groups_container = tk.Frame(
+        groups_container = tk.Frame(
             parent, bg=self.colors['bg_secondary'],
             highlightbackground=self.colors['border'], highlightthickness=1
         )
-        self.groups_container.pack(fill='both', expand=True)
-
-        self.groups_canvas = tk.Canvas(
-            self.groups_container, bg=self.colors['bg_secondary'],
-            highlightthickness=0, borderwidth=0
-        )
-        self.groups_scrollbar = ttk.Scrollbar(
-            self.groups_container, orient='vertical', command=self.groups_canvas.yview
-        )
+        groups_container.pack(fill='both', expand=True)
+        self.groups_canvas = tk.Canvas(groups_container, bg=self.colors['bg_secondary'], highlightthickness=0, borderwidth=0)
+        scrollbar = ttk.Scrollbar(groups_container, orient='vertical', command=self.groups_canvas.yview)
         self.groups_frame = tk.Frame(self.groups_canvas, bg=self.colors['bg_secondary'])
-
-        self.groups_frame.bind(
-            '<Configure>',
-            lambda event: self.groups_canvas.configure(scrollregion=self.groups_canvas.bbox('all'))
-        )
-        self.groups_canvas_window = self.groups_canvas.create_window(
-            (0, 0), window=self.groups_frame, anchor='nw'
-        )
-        self.groups_canvas.configure(yscrollcommand=self.groups_scrollbar.set)
-        self.groups_canvas.bind('<Configure>', self.resize_groups_window)
-
+        self.groups_frame.bind('<Configure>', lambda event: self.groups_canvas.configure(scrollregion=self.groups_canvas.bbox('all')))
+        self.canvas_window = self.groups_canvas.create_window((0, 0), window=self.groups_frame, anchor='nw')
+        self.groups_canvas.configure(yscrollcommand=scrollbar.set)
+        self.groups_canvas.bind('<Configure>', lambda event: self.groups_canvas.itemconfigure(self.canvas_window, width=event.width))
         self.groups_canvas.pack(side='left', fill='both', expand=True)
-        self.groups_scrollbar.pack(side='right', fill='y')
-
-    def resize_groups_window(self, event):
-        self.groups_canvas.itemconfigure(self.groups_canvas_window, width=event.width)
+        scrollbar.pack(side='right', fill='y')
 
     def create_actions(self, parent):
         actions = tk.Frame(parent, bg=self.colors['bg_primary'])
         actions.pack(fill='x', pady=(16, 0))
+        self.btn_up = self.create_button(
+            actions, '↑ Mover para cima', self.move_selected_up,
+            self.colors['bg_tertiary'], self.colors['text_primary'],
+            ('Segoe UI', 10, 'bold'), 16, 10, state='disabled'
+        )
+        self.btn_up.pack(side='left')
+        self.btn_down = self.create_button(
+            actions, '↓ Mover para baixo', self.move_selected_down,
+            self.colors['bg_tertiary'], self.colors['text_primary'],
+            ('Segoe UI', 10, 'bold'), 16, 10, state='disabled'
+        )
+        self.btn_down.pack(side='left', padx=(10, 0))
         self.btn_edit = self.create_button(
             actions, '✎ Editar', self.edit_field,
             self.colors['bg_tertiary'], self.colors['text_primary'],
             ('Segoe UI', 10, 'bold'), 20, 10, state='disabled'
         )
-        self.btn_edit.pack(side='left')
+        self.btn_edit.pack(side='left', padx=(18, 0))
         self.btn_delete = self.create_button(
             actions, '🗑 Excluir', self.delete_field,
             self.colors['bg_secondary'], self.colors['text_secondary'],
@@ -155,12 +152,9 @@ class CamposView(tk.Frame):
             cursor='hand2' if state == 'normal' else 'arrow', state=state
         )
         if state == 'normal':
-            button.bind('<Enter>', lambda e: self.on_button_hover(e, background, True))
-            button.bind('<Leave>', lambda e: self.on_button_hover(e, background, False))
+            button.bind('<Enter>', lambda e: e.widget.configure(bg=self.colors['accent']))
+            button.bind('<Leave>', lambda e: e.widget.configure(bg=background))
         return button
-
-    def on_button_hover(self, event, original_color, entering):
-        event.widget.configure(bg=self.colors['bg_tertiary'] if entering else original_color)
 
     def clear_search_placeholder(self, event):
         if self.search_var.get() == 'Buscar campo...':
@@ -180,21 +174,21 @@ class CamposView(tk.Frame):
         search = self.get_current_search()
         self.load_fields(search, expand_results=bool(search))
 
-    def load_fields(self, search='', expand_results=False):
+    def load_fields(self, search='', expand_results=False, keep_selection=False):
+        previous_selection = self.selected_field if keep_selection else None
         for widget in self.groups_frame.winfo_children():
             widget.destroy()
-
         self.field_buttons = {}
-        self.category_groups = {}
+        self.field_data = {}
         self.selected_field = None
-        self.btn_edit.configure(state='disabled')
-        self.btn_delete.configure(state='disabled')
+        self.disable_actions()
 
         categorias = list_categorias()
         campos = list_campos(search)
         fields_by_category = {}
         for campo in campos:
             fields_by_category.setdefault(campo['categoria_id'], []).append(campo)
+            self.field_data[campo['id']] = campo
 
         if not categorias:
             self.show_empty_message('Nenhuma categoria cadastrada. Crie uma categoria antes de adicionar campos.')
@@ -210,59 +204,50 @@ class CamposView(tk.Frame):
 
         if not has_visible_content:
             self.show_empty_message('Nenhum campo encontrado para a busca informada.')
+        elif previous_selection in self.field_buttons:
+            self.select_field(previous_selection)
 
     def show_empty_message(self, text):
         tk.Label(
             self.groups_frame, text=text, font=('Segoe UI', 11),
-            fg=self.colors['text_secondary'], bg=self.colors['bg_secondary'],
-            justify='center', wraplength=500
+            fg=self.colors['text_secondary'], bg=self.colors['bg_secondary'], justify='center', wraplength=500
         ).pack(pady=50)
 
     def create_category_group(self, categoria, campos, expand_results):
+        category_id = categoria['id']
         group = tk.Frame(self.groups_frame, bg=self.colors['bg_secondary'])
         group.pack(fill='x', padx=16, pady=(14, 0))
-
-        category_id = categoria['id']
         expanded = expand_results or category_id in self.expanded_categories
         arrow = '⌄' if expanded else '›'
         count_text = f"{len(campos)} campo" + ('' if len(campos) == 1 else 's')
-
         header = tk.Button(
             group, text=f'{arrow}  {categoria["nome"]}   ·   {count_text}',
             command=lambda cat_id=category_id: self.toggle_category(cat_id),
-            font=('Segoe UI', 11, 'bold'), fg=self.colors['text_primary'],
-            bg=self.colors['bg_tertiary'], activebackground=self.colors['accent'],
-            activeforeground=self.colors['text_primary'], borderwidth=0,
-            anchor='w', padx=16, pady=12, cursor='hand2'
+            font=('Segoe UI', 11, 'bold'), fg=self.colors['text_primary'], bg=self.colors['bg_tertiary'],
+            activebackground=self.colors['accent'], activeforeground=self.colors['text_primary'],
+            borderwidth=0, anchor='w', padx=16, pady=12, cursor='hand2'
         )
         header.pack(fill='x')
         header.bind('<Enter>', lambda event: event.widget.configure(bg=self.colors['accent']))
         header.bind('<Leave>', lambda event: event.widget.configure(bg=self.colors['bg_tertiary']))
 
         fields_frame = tk.Frame(group, bg=self.colors['bg_secondary'])
-        self.category_groups[category_id] = {'fields_frame': fields_frame, 'header': header}
-
         if campos:
-            for campo in campos:
-                self.create_field_row(fields_frame, campo)
+            for index, campo in enumerate(campos, start=1):
+                self.create_field_row(fields_frame, campo, index)
         else:
-            tk.Label(
-                fields_frame, text='Nenhum campo nesta categoria.',
-                font=('Segoe UI', 10), fg=self.colors['text_secondary'],
-                bg=self.colors['bg_secondary']
-            ).pack(anchor='w', padx=20, pady=14)
-
+            tk.Label(fields_frame, text='Nenhum campo nesta categoria.', font=('Segoe UI', 10),
+                     fg=self.colors['text_secondary'], bg=self.colors['bg_secondary']).pack(anchor='w', padx=20, pady=14)
         if expanded:
             fields_frame.pack(fill='x')
 
-    def create_field_row(self, parent, campo):
+    def create_field_row(self, parent, campo, position):
         row = tk.Button(
-            parent, text=f'     {campo["nome"]}',
+            parent, text=f'     {position}.  {campo["nome"]}',
             command=lambda field_id=campo['id']: self.select_field(field_id),
-            font=('Segoe UI', 10), fg=self.colors['text_primary'],
-            bg=self.colors['bg_secondary'], activebackground=self.colors['bg_tertiary'],
-            activeforeground=self.colors['text_primary'], borderwidth=0,
-            anchor='w', padx=16, pady=10, cursor='hand2'
+            font=('Segoe UI', 10), fg=self.colors['text_primary'], bg=self.colors['bg_secondary'],
+            activebackground=self.colors['bg_tertiary'], activeforeground=self.colors['text_primary'],
+            borderwidth=0, anchor='w', padx=16, pady=10, cursor='hand2'
         )
         row.pack(fill='x', padx=1)
         row.bind('<Enter>', lambda event: self.on_field_hover(event, True))
@@ -283,19 +268,40 @@ class CamposView(tk.Frame):
     def select_field(self, field_id):
         self.selected_field = field_id
         for current_id, button in self.field_buttons.items():
-            color = self.colors['accent'] if current_id == field_id else self.colors['bg_secondary']
-            button.configure(bg=color)
+            button.configure(bg=self.colors['accent'] if current_id == field_id else self.colors['bg_secondary'])
+        self.update_actions_state()
+
+    def update_actions_state(self):
+        if not self.selected_field:
+            self.disable_actions()
+            return
+        campo = self.field_data.get(self.selected_field)
+        same_category = [item for item in self.field_data.values() if item['categoria_id'] == campo['categoria_id']]
+        same_category.sort(key=lambda item: (item['ordem'], item['id']))
+        current_index = next(index for index, item in enumerate(same_category) if item['id'] == campo['id'])
+        self.btn_up.configure(state='normal' if current_index > 0 else 'disabled')
+        self.btn_down.configure(state='normal' if current_index < len(same_category) - 1 else 'disabled')
         self.btn_edit.configure(state='normal')
         self.btn_delete.configure(state='normal')
+
+    def disable_actions(self):
+        self.btn_up.configure(state='disabled')
+        self.btn_down.configure(state='disabled')
+        self.btn_edit.configure(state='disabled')
+        self.btn_delete.configure(state='disabled')
+
+    def move_selected_up(self):
+        if self.selected_field and move_campo(self.selected_field, 'up'):
+            self.load_fields(keep_selection=True)
+
+    def move_selected_down(self):
+        if self.selected_field and move_campo(self.selected_field, 'down'):
+            self.load_fields(keep_selection=True)
 
     def open_add_dialog(self):
         categorias = list_categorias()
         if not categorias:
-            messagebox.showwarning(
-                'Categoria necessária',
-                'Cadastre pelo menos uma categoria antes de adicionar campos.',
-                parent=self.winfo_toplevel()
-            )
+            messagebox.showwarning('Categoria necessária', 'Cadastre pelo menos uma categoria antes de adicionar campos.', parent=self.winfo_toplevel())
             return
         self.open_field_dialog(categorias=categorias)
 
@@ -315,7 +321,6 @@ class CamposView(tk.Frame):
         dialog.resizable(False, False)
         dialog.transient(self.winfo_toplevel())
         dialog.grab_set()
-
         width, height = 450, 370
         parent = self.winfo_toplevel()
         x = parent.winfo_x() + (parent.winfo_width() - width) // 2
@@ -324,73 +329,39 @@ class CamposView(tk.Frame):
 
         content = tk.Frame(dialog, bg=self.colors['bg_primary'])
         content.pack(fill='both', expand=True, padx=30, pady=28)
-        tk.Label(
-            content, text='Editar campo' if editing else 'Adicionar campo',
-            font=('Segoe UI', 18, 'bold'), fg=self.colors['text_primary'],
-            bg=self.colors['bg_primary']
-        ).pack(anchor='w', pady=(0, 24))
-
+        tk.Label(content, text='Editar campo' if editing else 'Adicionar campo', font=('Segoe UI', 18, 'bold'),
+                 fg=self.colors['text_primary'], bg=self.colors['bg_primary']).pack(anchor='w', pady=(0, 24))
         category_map = {categoria['nome']: categoria['id'] for categoria in categorias}
         category_names = list(category_map.keys())
-        current_category = next(
-            (nome for nome, categoria_id in category_map.items()
-             if editing and categoria_id == campo['categoria_id']),
-            category_names[0]
-        )
+        current_category = next((nome for nome, categoria_id in category_map.items() if editing and categoria_id == campo['categoria_id']), category_names[0])
         nome_var = tk.StringVar(value=campo['nome'] if editing else '')
         categoria_var = tk.StringVar(value=current_category)
-
         nome_field, nome_entry = self.create_entry_field(content, 'Nome do campo *', nome_var)
         nome_field.pack(fill='x', pady=(0, 16))
         self.create_combo_field(content, 'Categoria *', categoria_var, category_names).pack(fill='x')
-
         actions = tk.Frame(content, bg=self.colors['bg_primary'])
         actions.pack(fill='x', pady=(28, 0))
-        self.create_button(
-            actions, 'Cancelar', dialog.destroy,
-            self.colors['bg_secondary'], self.colors['text_secondary'],
-            ('Segoe UI', 10), 16, 9
-        ).pack(side='right')
+        self.create_button(actions, 'Cancelar', dialog.destroy, self.colors['bg_secondary'], self.colors['text_secondary'], ('Segoe UI', 10), 16, 9).pack(side='right')
         self.create_button(
             actions, 'Salvar',
-            lambda: self.save_field(
-                dialog, nome_var.get(), category_map.get(categoria_var.get()),
-                campo['id'] if editing else None
-            ),
-            self.colors['accent'], self.colors['text_primary'],
-            ('Segoe UI', 10, 'bold'), 18, 9
+            lambda: self.save_field(dialog, nome_var.get(), category_map.get(categoria_var.get()), campo['id'] if editing else None),
+            self.colors['accent'], self.colors['text_primary'], ('Segoe UI', 10, 'bold'), 18, 9
         ).pack(side='right', padx=(0, 10))
-        dialog.bind('<Return>', lambda event: self.save_field(
-            dialog, nome_var.get(), category_map.get(categoria_var.get()),
-            campo['id'] if editing else None
-        ))
+        dialog.bind('<Return>', lambda event: self.save_field(dialog, nome_var.get(), category_map.get(categoria_var.get()), campo['id'] if editing else None))
         dialog.bind('<Escape>', lambda event: dialog.destroy())
         dialog.after(100, nome_entry.focus_set)
 
     def create_entry_field(self, parent, label_text, variable):
         field = tk.Frame(parent, bg=self.colors['bg_primary'])
-        tk.Label(
-            field, text=label_text, font=('Segoe UI', 10),
-            fg=self.colors['text_secondary'], bg=self.colors['bg_primary']
-        ).pack(anchor='w', pady=(0, 6))
-        entry = tk.Entry(
-            field, textvariable=variable, font=('Segoe UI', 11),
-            fg=self.colors['text_primary'], bg=self.colors['bg_secondary'],
-            insertbackground=self.colors['text_primary'], relief='flat', borderwidth=0
-        )
+        tk.Label(field, text=label_text, font=('Segoe UI', 10), fg=self.colors['text_secondary'], bg=self.colors['bg_primary']).pack(anchor='w', pady=(0, 6))
+        entry = tk.Entry(field, textvariable=variable, font=('Segoe UI', 11), fg=self.colors['text_primary'], bg=self.colors['bg_secondary'], insertbackground=self.colors['text_primary'], relief='flat', borderwidth=0)
         entry.pack(fill='x', ipady=10)
         return field, entry
 
     def create_combo_field(self, parent, label_text, variable, values):
         field = tk.Frame(parent, bg=self.colors['bg_primary'])
-        tk.Label(
-            field, text=label_text, font=('Segoe UI', 10),
-            fg=self.colors['text_secondary'], bg=self.colors['bg_primary']
-        ).pack(anchor='w', pady=(0, 6))
-        combo = ttk.Combobox(
-            field, textvariable=variable, values=values,
-            state='readonly', style='Campos.TCombobox', font=('Segoe UI', 10)
-        )
+        tk.Label(field, text=label_text, font=('Segoe UI', 10), fg=self.colors['text_secondary'], bg=self.colors['bg_primary']).pack(anchor='w', pady=(0, 6))
+        combo = ttk.Combobox(field, textvariable=variable, values=values, state='readonly', style='Campos.TCombobox', font=('Segoe UI', 10))
         combo.pack(fill='x')
         return field
 
