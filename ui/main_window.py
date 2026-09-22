@@ -1,10 +1,11 @@
 import tkinter as tk
-from tkinter import ttk
-from ui.sidebar import Sidebar
-from ui.content_area import ContentArea
+from ui.menu_view import MenuView
+from ui.cadastros_view import CadastrosView
+from ui.gerenciamento_view import GerenciamentoView
+from ui.config_view import ConfigView
 
 class MainWindow(tk.Tk):
-    """Janela principal do aplicativo."""
+    """Janela principal com navegacao entre telas."""
     
     COLORS = {
         'bg_primary': '#1a1a2e',
@@ -19,36 +20,16 @@ class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
         
-        self.title('BusinessReg - Sistema de Registro de Empresas')
-        self.geometry('1200x700')
-        self.minsize(1000, 600)
-        
-        self.configure_styles()
+        self.title('BusinessReg')
+        self.geometry('1000x600')
+        self.minsize(800, 500)
         self.configure(bg=self.COLORS['bg_primary'])
         
-        self.columnconfigure(0, weight=0)
-        self.columnconfigure(1, weight=1)
-        self.rowconfigure(0, weight=1)
+        self.current_view = None
         
-        self.create_widgets()
+        self.create_views()
+        self.show_menu()
         self.center_window()
-    
-    def configure_styles(self):
-        style = ttk.Style()
-        style.theme_use('clam')
-        
-        style.configure(
-            'Custom.TButton',
-            background=self.COLORS['bg_tertiary'],
-            foreground=self.COLORS['text_primary'],
-            borderwidth=0,
-            padding=10
-        )
-        
-        style.map(
-            'Custom.TButton',
-            background=[('active', self.COLORS['accent'])]
-        )
     
     def center_window(self):
         self.update_idletasks()
@@ -58,12 +39,33 @@ class MainWindow(tk.Tk):
         y = (self.winfo_screenheight() // 2) - (height // 2)
         self.geometry(f'{width}x{height}+{x}+{y}')
     
-    def create_widgets(self):
-        self.sidebar = Sidebar(self, self.COLORS)
-        self.sidebar.grid(row=0, column=0, sticky='ns')
+    def create_views(self):
+        self.menu_view = MenuView(self, self.COLORS, self.navigate)
+        self.cadastros_view = CadastrosView(self, self.COLORS, self.show_menu)
+        self.gerenciamento_view = GerenciamentoView(self, self.COLORS, self.show_menu)
+        self.config_view = ConfigView(self, self.COLORS, self.show_menu)
+    
+    def navigate(self, screen):
+        self.hide_all()
         
-        self.content_area = ContentArea(self, self.COLORS)
-        self.content_area.grid(row=0, column=1, sticky='nsew', padx=20, pady=20)
+        if screen == 'cadastros':
+            self.cadastros_view.pack(fill='both', expand=True)
+            self.current_view = 'cadastros'
+        elif screen == 'gerenciamento':
+            self.gerenciamento_view.pack(fill='both', expand=True)
+            self.current_view = 'gerenciamento'
+        elif screen == 'configuracoes':
+            self.config_view.pack(fill='both', expand=True)
+            self.current_view = 'configuracoes'
+    
+    def show_menu(self):
+        self.hide_all()
+        self.menu_view.pack(fill='both', expand=True)
+        self.current_view = 'menu'
+    
+    def hide_all(self):
+        for view in [self.menu_view, self.cadastros_view, self.gerenciamento_view, self.config_view]:
+            view.pack_forget()
 
 
 if __name__ == '__main__':
