@@ -207,29 +207,35 @@ class EmpresasView(tk.Frame):
         dialog.transient(self.winfo_toplevel())
         dialog.grab_set()
 
-        width, height = 430, 300
+        width, height = 460, 370
         parent = self.winfo_toplevel()
         x = parent.winfo_x() + (parent.winfo_width() - width) // 2
         y = parent.winfo_y() + (parent.winfo_height() - height) // 2
         dialog.geometry(f'{width}x{height}+{x}+{y}')
 
         content = tk.Frame(dialog, bg=self.colors['bg_primary'])
-        content.pack(fill='both', expand=True, padx=28, pady=26)
+        content.pack(fill='both', expand=True, padx=30, pady=28)
         tk.Label(
             content, text='Editar empresa' if editing else 'Adicionar empresa',
             font=('Segoe UI', 18, 'bold'), fg=self.colors['text_primary'],
             bg=self.colors['bg_primary']
-        ).pack(anchor='w', pady=(0, 20))
+        ).pack(anchor='w', pady=(0, 24))
 
         nome_var = tk.StringVar(value=empresa['nome'] if editing else '')
         localizacao_var = tk.StringVar(value=empresa['localizacao'] if editing else '')
-        nome_entry = self.create_form_field(content, 'Nome da empresa *', nome_var)
-        nome_entry.pack(fill='x', pady=(0, 14))
-        localizacao_entry = self.create_form_field(content, 'Localização', localizacao_var)
-        localizacao_entry.pack(fill='x')
+
+        nome_field, nome_entry = self.create_form_field(
+            content, 'Nome da empresa *', nome_var
+        )
+        nome_field.pack(fill='x', pady=(0, 16))
+
+        localizacao_field, localizacao_entry = self.create_form_field(
+            content, 'Localização', localizacao_var
+        )
+        localizacao_field.pack(fill='x')
 
         actions = tk.Frame(content, bg=self.colors['bg_primary'])
-        actions.pack(fill='x', pady=(24, 0))
+        actions.pack(fill='x', pady=(28, 0))
         self.create_button(
             actions, 'Cancelar', dialog.destroy,
             self.colors['bg_secondary'], self.colors['text_secondary'],
@@ -249,6 +255,7 @@ class EmpresasView(tk.Frame):
         dialog.after(100, nome_entry.focus_set)
 
     def create_form_field(self, parent, label_text, variable):
+        """Monta e retorna o Frame do campo e seu Entry interno."""
         field = tk.Frame(parent, bg=self.colors['bg_primary'])
         tk.Label(
             field, text=label_text, font=('Segoe UI', 10),
@@ -259,8 +266,8 @@ class EmpresasView(tk.Frame):
             fg=self.colors['text_primary'], bg=self.colors['bg_secondary'],
             insertbackground=self.colors['text_primary'], relief='flat', borderwidth=0
         )
-        entry.pack(fill='x', ipady=9)
-        return entry
+        entry.pack(fill='x', ipady=10)
+        return field, entry
 
     def save_company(self, dialog, nome, localizacao, empresa_id=None):
         if not nome.strip():
