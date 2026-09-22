@@ -5,17 +5,14 @@ DB_NAME = 'empresas.db'
 
 
 def get_connection():
-    """Cria e retorna uma conexao com o banco de dados local."""
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db():
-    """Inicializa as tabelas necessarias para o aplicativo."""
     conn = get_connection()
     cursor = conn.cursor()
-
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS empresas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,20 +21,16 @@ def init_db():
             data_cadastro TEXT NOT NULL
         )
     ''')
-
     conn.commit()
     conn.close()
 
 
 def create_empresa(nome, localizacao=''):
-    """Salva uma nova empresa e retorna seu identificador."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        '''
-        INSERT INTO empresas (nome, localizacao, data_cadastro)
-        VALUES (?, ?, ?)
-        ''',
+        '''INSERT INTO empresas (nome, localizacao, data_cadastro)
+           VALUES (?, ?, ?)''',
         (nome.strip(), localizacao.strip(), datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     )
     empresa_id = cursor.lastrowid
@@ -46,29 +39,36 @@ def create_empresa(nome, localizacao=''):
     return empresa_id
 
 
+def get_empresa(empresa_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT id, nome, localizacao, data_cadastro FROM empresas WHERE id = ?',
+        (empresa_id,)
+    )
+    empresa = cursor.fetchone()
+    conn.close()
+    return empresa
+
+
 def list_empresas(search=''):
-    """Lista empresas, opcionalmente filtradas por nome ou localizacao."""
     conn = get_connection()
     cursor = conn.cursor()
 
     if search.strip():
         termo = f'%{search.strip()}%'
         cursor.execute(
-            '''
-            SELECT id, nome, localizacao, data_cadastro
-            FROM empresas
-            WHERE nome LIKE ? OR localizacao LIKE ?
-            ORDER BY nome COLLATE NOCASE
-            ''',
+            '''SELECT id, nome, localizacao, data_cadastro
+               FROM empresas
+               WHERE nome LIKE ? OR localizacao LIKE ?
+               ORDER BY nome COLLATE NOCASE''',
             (termo, termo)
         )
     else:
         cursor.execute(
-            '''
-            SELECT id, nome, localizacao, data_cadastro
-            FROM empresas
-            ORDER BY nome COLLATE NOCASE
-            '''
+            '''SELECT id, nome, localizacao, data_cadastro
+               FROM empresas
+               ORDER BY nome COLLATE NOCASE'''
         )
 
     empresas = cursor.fetchall()
@@ -77,15 +77,12 @@ def list_empresas(search=''):
 
 
 def update_empresa(empresa_id, nome, localizacao=''):
-    """Atualiza uma empresa cadastrada."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        '''
-        UPDATE empresas
-        SET nome = ?, localizacao = ?
-        WHERE id = ?
-        ''',
+        '''UPDATE empresas
+           SET nome = ?, localizacao = ?
+           WHERE id = ?''',
         (nome.strip(), localizacao.strip(), empresa_id)
     )
     conn.commit()
@@ -93,7 +90,6 @@ def update_empresa(empresa_id, nome, localizacao=''):
 
 
 def delete_empresa(empresa_id):
-    """Exclui uma empresa pelo identificador."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute('DELETE FROM empresas WHERE id = ?', (empresa_id,))
