@@ -12,7 +12,7 @@ from database import (
 
 
 class CamposView(tk.Frame):
-    """Tela para gerenciar os campos usados nos cadastros."""
+    """Tela para gerenciar campos organizados por categorias recolhíveis."""
 
     def __init__(self, parent, colors, on_back):
         super().__init__(parent)
@@ -20,34 +20,16 @@ class CamposView(tk.Frame):
         self.on_back = on_back
         self.configure(bg=colors['bg_primary'])
         self.selected_field = None
-        self.configure_treeview_style()
+        self.field_buttons = {}
+        self.category_groups = {}
+        self.expanded_categories = set()
+        self.configure_combo_style()
         self.create_widgets()
         self.load_fields()
 
-    def configure_treeview_style(self):
+    def configure_combo_style(self):
         style = ttk.Style()
         style.theme_use('clam')
-        style.configure(
-            'Campos.Treeview',
-            background=self.colors['bg_secondary'],
-            fieldbackground=self.colors['bg_secondary'],
-            foreground=self.colors['text_primary'],
-            rowheight=38,
-            borderwidth=0,
-            font=('Segoe UI', 10)
-        )
-        style.configure(
-            'Campos.Treeview.Heading',
-            background=self.colors['bg_tertiary'],
-            foreground=self.colors['text_primary'],
-            relief='flat',
-            font=('Segoe UI', 10, 'bold')
-        )
-        style.map(
-            'Campos.Treeview',
-            background=[('selected', self.colors['accent'])],
-            foreground=[('selected', self.colors['text_primary'])]
-        )
         style.configure(
             'Campos.TCombobox',
             fieldbackground=self.colors['bg_secondary'],
@@ -69,7 +51,7 @@ class CamposView(tk.Frame):
         container.pack(fill='both', expand=True, padx=40, pady=30)
         self.create_header(container)
         self.create_toolbar(container)
-        self.create_table(container)
+        self.create_groups_area(container)
         self.create_actions(container)
 
     def create_header(self, parent):
@@ -86,7 +68,7 @@ class CamposView(tk.Frame):
         ).pack(anchor='w', pady=(28, 4))
         tk.Label(
             header,
-            text='Crie os campos que serão exibidos nos cadastros, vinculados a uma categoria.',
+            text='Organize os campos por categoria para usar nos cadastros das empresas.',
             font=('Segoe UI', 10), fg=self.colors['text_secondary'],
             bg=self.colors['bg_primary']
         ).pack(anchor='w', pady=(0, 22))
@@ -117,33 +99,37 @@ class CamposView(tk.Frame):
             ('Segoe UI', 10, 'bold'), 18, 10
         ).pack(side='right')
 
-    def create_table(self, parent):
-        table_frame = tk.Frame(
+    def create_groups_area(self, parent):
+        self.groups_container = tk.Frame(
             parent, bg=self.colors['bg_secondary'],
             highlightbackground=self.colors['border'], highlightthickness=1
         )
-        table_frame.pack(fill='both', expand=True)
-        self.tree = ttk.Treeview(
-            table_frame, columns=('id', 'nome', 'categoria'),
-            show='headings', style='Campos.Treeview', selectmode='browse'
+        self.groups_container.pack(fill='both', expand=True)
+
+        self.groups_canvas = tk.Canvas(
+            self.groups_container, bg=self.colors['bg_secondary'],
+            highlightthickness=0, borderwidth=0
         )
-        self.tree.heading('id', text='ID')
-        self.tree.heading('nome', text='NOME DO CAMPO')
-        self.tree.heading('categoria', text='CATEGORIA')
-        self.tree.column('id', width=80, minwidth=60, anchor='center', stretch=False)
-        self.tree.column('nome', width=420, minwidth=200, anchor='w')
-        self.tree.column('categoria', width=380, minwidth=180, anchor='w')
-        scrollbar = ttk.Scrollbar(table_frame, orient='vertical', command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
-        self.tree.pack(side='left', fill='both', expand=True, padx=(1, 0), pady=1)
-        scrollbar.pack(side='right', fill='y', padx=(0, 1), pady=1)
-        self.tree.bind('<<TreeviewSelect>>', self.on_select_field)
-        self.empty_label = tk.Label(
-            table_frame,
-            text='Nenhum campo cadastrado\nClique em “+ Adicionar Campo” para começar.',
-            font=('Segoe UI', 11), fg=self.colors['text_secondary'],
-            bg=self.colors['bg_secondary'], justify='center'
+        self.groups_scrollbar = ttk.Scrollbar(
+            self.groups_container, orient='vertical', command=self.groups_canvas.yview
         )
+        self.groups_frame = tk.Frame(self.groups_canvas, bg=self.colors['bg_secondary'])
+
+        self.groups_frame.bind(
+            '<Configure>',
+            lambda event: self.groups_canvas.configure(scrollregion=self.groups_canvas.bbox('all'))
+        )
+        self.groups_canvas_window = self.groups_canvas.create_window(
+            (0, 0), window=self.groups_frame, anchor='nw'
+        )
+        self.groups_canvas.configure(yscrollcommand=self.groups_scrollbar.set)
+        self.groups_canvas.bind('<Configure>', self.resize_groups_window)
+
+        self.groups_canvas.pack(side='left', fill='both', expand=True)
+        self.groups_scrollbar.pack(side='right', fill='y')
+
+    def resize_groups_window(self, event):
+        self.groups_canvas.itemconfigure(self.groups_canvas_window, width=event.width)
 
     def create_actions(self, parent):
         actions = tk.Frame(parent, bg=self.colors['bg_primary'])
@@ -169,9 +155,12 @@ class CamposView(tk.Frame):
             cursor='hand2' if state == 'normal' else 'arrow', state=state
         )
         if state == 'normal':
-            button.bind('<Enter>', lambda e: e.widget.configure(bg=self.colors['bg_tertiary']))
-            button.bind('<Leave>', lambda e: e.widget.configure(bg=background))
+            button.bind('<Enter>', lambda e: self.on_button_hover(e, background, True))
+            button.bind('<Leave>', lambda e: self.on_button_hover(e, background, False))
         return button
+
+    def on_button_hover(self, event, original_color, entering):
+        event.widget.configure(bg=self.colors['bg_tertiary'] if entering else original_color)
 
     def clear_search_placeholder(self, event):
         if self.search_var.get() == 'Buscar campo...':
@@ -188,31 +177,116 @@ class CamposView(tk.Frame):
         return '' if search == 'Buscar campo...' else search
 
     def filter_fields(self, event=None):
-        self.load_fields(self.get_current_search())
+        search = self.get_current_search()
+        self.load_fields(search, expand_results=bool(search))
 
-    def load_fields(self, search=''):
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-        campos = list_campos(search)
-        for campo in campos:
-            self.tree.insert(
-                '', 'end', iid=str(campo['id']),
-                values=(campo['id'], campo['nome'], campo['categoria_nome'])
-            )
-        if campos:
-            self.empty_label.place_forget()
-        else:
-            self.empty_label.place(relx=0.5, rely=0.5, anchor='center')
+    def load_fields(self, search='', expand_results=False):
+        for widget in self.groups_frame.winfo_children():
+            widget.destroy()
+
+        self.field_buttons = {}
+        self.category_groups = {}
         self.selected_field = None
         self.btn_edit.configure(state='disabled')
         self.btn_delete.configure(state='disabled')
 
-    def on_select_field(self, event=None):
-        selection = self.tree.selection()
-        self.selected_field = selection[0] if selection else None
-        state = 'normal' if self.selected_field else 'disabled'
-        self.btn_edit.configure(state=state)
-        self.btn_delete.configure(state=state)
+        categorias = list_categorias()
+        campos = list_campos(search)
+        fields_by_category = {}
+        for campo in campos:
+            fields_by_category.setdefault(campo['categoria_id'], []).append(campo)
+
+        if not categorias:
+            self.show_empty_message('Nenhuma categoria cadastrada. Crie uma categoria antes de adicionar campos.')
+            return
+
+        has_visible_content = False
+        for categoria in categorias:
+            category_fields = fields_by_category.get(categoria['id'], [])
+            if search and not category_fields:
+                continue
+            has_visible_content = True
+            self.create_category_group(categoria, category_fields, expand_results)
+
+        if not has_visible_content:
+            self.show_empty_message('Nenhum campo encontrado para a busca informada.')
+
+    def show_empty_message(self, text):
+        tk.Label(
+            self.groups_frame, text=text, font=('Segoe UI', 11),
+            fg=self.colors['text_secondary'], bg=self.colors['bg_secondary'],
+            justify='center', wraplength=500
+        ).pack(pady=50)
+
+    def create_category_group(self, categoria, campos, expand_results):
+        group = tk.Frame(self.groups_frame, bg=self.colors['bg_secondary'])
+        group.pack(fill='x', padx=16, pady=(14, 0))
+
+        category_id = categoria['id']
+        expanded = expand_results or category_id in self.expanded_categories
+        arrow = '⌄' if expanded else '›'
+        count_text = f"{len(campos)} campo" + ('' if len(campos) == 1 else 's')
+
+        header = tk.Button(
+            group, text=f'{arrow}  {categoria["nome"]}   ·   {count_text}',
+            command=lambda cat_id=category_id: self.toggle_category(cat_id),
+            font=('Segoe UI', 11, 'bold'), fg=self.colors['text_primary'],
+            bg=self.colors['bg_tertiary'], activebackground=self.colors['accent'],
+            activeforeground=self.colors['text_primary'], borderwidth=0,
+            anchor='w', padx=16, pady=12, cursor='hand2'
+        )
+        header.pack(fill='x')
+        header.bind('<Enter>', lambda event: event.widget.configure(bg=self.colors['accent']))
+        header.bind('<Leave>', lambda event: event.widget.configure(bg=self.colors['bg_tertiary']))
+
+        fields_frame = tk.Frame(group, bg=self.colors['bg_secondary'])
+        self.category_groups[category_id] = {'fields_frame': fields_frame, 'header': header}
+
+        if campos:
+            for campo in campos:
+                self.create_field_row(fields_frame, campo)
+        else:
+            tk.Label(
+                fields_frame, text='Nenhum campo nesta categoria.',
+                font=('Segoe UI', 10), fg=self.colors['text_secondary'],
+                bg=self.colors['bg_secondary']
+            ).pack(anchor='w', padx=20, pady=14)
+
+        if expanded:
+            fields_frame.pack(fill='x')
+
+    def create_field_row(self, parent, campo):
+        row = tk.Button(
+            parent, text=f'     {campo["nome"]}',
+            command=lambda field_id=campo['id']: self.select_field(field_id),
+            font=('Segoe UI', 10), fg=self.colors['text_primary'],
+            bg=self.colors['bg_secondary'], activebackground=self.colors['bg_tertiary'],
+            activeforeground=self.colors['text_primary'], borderwidth=0,
+            anchor='w', padx=16, pady=10, cursor='hand2'
+        )
+        row.pack(fill='x', padx=1)
+        row.bind('<Enter>', lambda event: self.on_field_hover(event, True))
+        row.bind('<Leave>', lambda event: self.on_field_hover(event, False))
+        self.field_buttons[campo['id']] = row
+
+    def on_field_hover(self, event, entering):
+        if event.widget != self.field_buttons.get(self.selected_field):
+            event.widget.configure(bg=self.colors['bg_tertiary'] if entering else self.colors['bg_secondary'])
+
+    def toggle_category(self, category_id):
+        if category_id in self.expanded_categories:
+            self.expanded_categories.discard(category_id)
+        else:
+            self.expanded_categories.add(category_id)
+        self.load_fields(self.get_current_search(), expand_results=bool(self.get_current_search()))
+
+    def select_field(self, field_id):
+        self.selected_field = field_id
+        for current_id, button in self.field_buttons.items():
+            color = self.colors['accent'] if current_id == field_id else self.colors['bg_secondary']
+            button.configure(bg=color)
+        self.btn_edit.configure(state='normal')
+        self.btn_delete.configure(state='normal')
 
     def open_add_dialog(self):
         categorias = list_categorias()
@@ -263,14 +337,12 @@ class CamposView(tk.Frame):
              if editing and categoria_id == campo['categoria_id']),
             category_names[0]
         )
-
         nome_var = tk.StringVar(value=campo['nome'] if editing else '')
         categoria_var = tk.StringVar(value=current_category)
 
         nome_field, nome_entry = self.create_entry_field(content, 'Nome do campo *', nome_var)
         nome_field.pack(fill='x', pady=(0, 16))
-        categoria_field = self.create_combo_field(content, 'Categoria *', categoria_var, category_names)
-        categoria_field.pack(fill='x')
+        self.create_combo_field(content, 'Categoria *', categoria_var, category_names).pack(fill='x')
 
         actions = tk.Frame(content, bg=self.colors['bg_primary'])
         actions.pack(fill='x', pady=(28, 0))
@@ -334,14 +406,14 @@ class CamposView(tk.Frame):
         else:
             update_campo(campo_id, categoria_id, nome)
         dialog.destroy()
-        self.load_fields(self.get_current_search())
+        self.load_fields()
 
     def delete_field(self):
         if not self.selected_field:
             return
         campo = get_campo(int(self.selected_field))
         if not campo:
-            self.load_fields(self.get_current_search())
+            self.load_fields()
             return
         confirmed = messagebox.askyesno(
             'Excluir campo',
@@ -350,4 +422,4 @@ class CamposView(tk.Frame):
         )
         if confirmed:
             delete_campo(campo['id'])
-            self.load_fields(self.get_current_search())
+            self.load_fields()
