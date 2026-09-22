@@ -3,6 +3,9 @@ from ui.menu_view import MenuView
 from ui.cadastros_view import CadastrosView
 from ui.gerenciamento_view import GerenciamentoView
 from ui.config_view import ConfigView
+from ui.empresas_view import EmpresasView
+from ui.categorias_view import CategoriasView
+from ui.campos_view import CamposView
 
 class MainWindow(tk.Tk):
     """Janela principal com navegacao entre telas."""
@@ -42,8 +45,11 @@ class MainWindow(tk.Tk):
     def create_views(self):
         self.menu_view = MenuView(self, self.COLORS, self.navigate)
         self.cadastros_view = CadastrosView(self, self.COLORS, self.show_menu)
-        self.gerenciamento_view = GerenciamentoView(self, self.COLORS, self.show_menu)
+        self.gerenciamento_view = GerenciamentoView(self, self.COLORS, self.show_menu, self.navigate_submenu)
         self.config_view = ConfigView(self, self.COLORS, self.show_menu)
+        self.empresas_view = EmpresasView(self, self.COLORS, self.show_gerenciamento)
+        self.categorias_view = CategoriasView(self, self.COLORS, self.show_gerenciamento)
+        self.campos_view = CamposView(self, self.COLORS, self.show_gerenciamento)
     
     def navigate(self, screen):
         self.hide_all()
@@ -58,13 +64,32 @@ class MainWindow(tk.Tk):
             self.config_view.pack(fill='both', expand=True)
             self.current_view = 'configuracoes'
     
+    def navigate_submenu(self, screen):
+        self.hide_all()
+        
+        if screen == 'empresas':
+            self.empresas_view.pack(fill='both', expand=True)
+            self.current_view = 'empresas'
+        elif screen == 'categorias':
+            self.categorias_view.pack(fill='both', expand=True)
+            self.current_view = 'categorias'
+        elif screen == 'campos':
+            self.campos_view.pack(fill='both', expand=True)
+            self.current_view = 'campos'
+    
     def show_menu(self):
         self.hide_all()
         self.menu_view.pack(fill='both', expand=True)
         self.current_view = 'menu'
     
+    def show_gerenciamento(self):
+        self.hide_all()
+        self.gerenciamento_view.pack(fill='both', expand=True)
+        self.current_view = 'gerenciamento'
+    
     def hide_all(self):
-        for view in [self.menu_view, self.cadastros_view, self.gerenciamento_view, self.config_view]:
+        for view in [self.menu_view, self.cadastros_view, self.gerenciamento_view, 
+                     self.config_view, self.empresas_view, self.categorias_view, self.campos_view]:
             view.pack_forget()
 
 

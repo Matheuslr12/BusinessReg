@@ -1,12 +1,13 @@
 import tkinter as tk
 
 class GerenciamentoView(tk.Frame):
-    """Tela de Gerenciamento."""
+    """Tela de Gerenciamento com submenu."""
     
-    def __init__(self, parent, colors, on_back):
+    def __init__(self, parent, colors, on_back, on_navigate):
         super().__init__(parent)
         self.colors = colors
         self.on_back = on_back
+        self.on_navigate = on_navigate
         self.configure(bg=colors['bg_primary'])
         
         self.create_widgets()
@@ -40,13 +41,41 @@ class GerenciamentoView(tk.Frame):
             fg=self.colors['text_primary'],
             bg=self.colors['bg_primary']
         )
-        title.pack(pady=20)
+        title.pack(pady=(20, 40))
         
-        content = tk.Label(
-            self,
-            text='Lista de empresas em desenvolvimento...',
-            font=('Segoe UI', 11),
-            fg=self.colors['text_secondary'],
-            bg=self.colors['bg_primary']
+        menu_frame = tk.Frame(self, bg=self.colors['bg_primary'])
+        menu_frame.place(relx=0.5, rely=0.5, anchor='center')
+        
+        self.btn_empresas = self.create_submenu_button(
+            menu_frame, '🏢 Empresas', lambda: self.on_navigate('empresas')
         )
-        content.pack(pady=40)
+        self.btn_empresas.pack(fill='x', pady=10, ipadx=40, ipady=10)
+        
+        self.btn_categorias = self.create_submenu_button(
+            menu_frame, '📁 Categorias', lambda: self.on_navigate('categorias')
+        )
+        self.btn_categorias.pack(fill='x', pady=10, ipadx=40, ipady=10)
+        
+        self.btn_campos = self.create_submenu_button(
+            menu_frame, '🏷️ Campos', lambda: self.on_navigate('campos')
+        )
+        self.btn_campos.pack(fill='x', pady=10, ipadx=40, ipady=10)
+    
+    def create_submenu_button(self, parent, text, command):
+        btn = tk.Button(
+            parent,
+            text=text,
+            font=('Segoe UI', 12, 'bold'),
+            fg=self.colors['text_primary'],
+            bg=self.colors['bg_secondary'],
+            activebackground=self.colors['bg_tertiary'],
+            activeforeground=self.colors['text_primary'],
+            borderwidth=0,
+            padx=30,
+            pady=15,
+            cursor='hand2',
+            command=command
+        )
+        btn.bind('<Enter>', lambda e: e.widget.configure(bg=self.colors['bg_tertiary']))
+        btn.bind('<Leave>', lambda e: e.widget.configure(bg=self.colors['bg_secondary']))
+        return btn
