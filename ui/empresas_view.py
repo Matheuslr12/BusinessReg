@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from database import create_empresa, get_empresa, list_empresas, update_empresa
+from database import create_empresa, delete_empresa, get_empresa, list_empresas, update_empresa
 
 
 class EmpresasView(tk.Frame):
@@ -160,9 +160,12 @@ class EmpresasView(tk.Frame):
             self.search_var.set('Buscar empresa...')
             self.search_entry.configure(fg=self.colors['text_secondary'])
 
+    def get_current_search(self):
+        search = self.search_var.get().strip()
+        return '' if search == 'Buscar empresa...' else search
+
     def filter_companies(self, event=None):
-        search = self.search_var.get()
-        self.load_companies('' if search == 'Buscar empresa...' else search)
+        self.load_companies(self.get_current_search())
 
     def load_companies(self, search=''):
         for item in self.tree.get_children():
@@ -223,15 +226,9 @@ class EmpresasView(tk.Frame):
 
         nome_var = tk.StringVar(value=empresa['nome'] if editing else '')
         localizacao_var = tk.StringVar(value=empresa['localizacao'] if editing else '')
-
-        nome_field, nome_entry = self.create_form_field(
-            content, 'Nome da empresa *', nome_var
-        )
+        nome_field, nome_entry = self.create_form_field(content, 'Nome da empresa *', nome_var)
         nome_field.pack(fill='x', pady=(0, 16))
-
-        localizacao_field, localizacao_entry = self.create_form_field(
-            content, 'Localização', localizacao_var
-        )
+        localizacao_field, _ = self.create_form_field(content, 'Localização', localizacao_var)
         localizacao_field.pack(fill='x')
 
         actions = tk.Frame(content, bg=self.colors['bg_primary'])
@@ -255,7 +252,6 @@ class EmpresasView(tk.Frame):
         dialog.after(100, nome_entry.focus_set)
 
     def create_form_field(self, parent, label_text, variable):
-        """Monta e retorna o Frame do campo e seu Entry interno."""
         field = tk.Frame(parent, bg=self.colors['bg_primary'])
         tk.Label(
             field, text=label_text, font=('Segoe UI', 10),
@@ -278,8 +274,24 @@ class EmpresasView(tk.Frame):
         else:
             update_empresa(empresa_id, nome, localizacao)
         dialog.destroy()
-        self.load_companies()
+        self.load_companies(self.get_current_search())
 
     def delete_company(self):
-        if self.selected_company:
-            messagebox.showinfo('Em desenvolvimento', 'A exclusão será implementada no próximo passo.')
+        if not self.selected_company:
+            return
+
+        empresa = get_empresa(int(self.selected_company))
+        if not empresa:
+            self.load_companies(self.get_current_search())
+            return
+
+        confirmed = messagebox.askyesno(
+            'Excluir empresa',
+            f'Tem certeza que deseja excluir "{empresa["nome"]}"?\n\nEssa ação não poderá ser desfeita.',
+            icon='warning',
+            parent=self.winfo_toplevel()
+        )
+
+        if confirmed:
+            delete_empresa(empresa['id'])
+            self.load_companies(self.get_current_search())
