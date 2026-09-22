@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""
-Amicom - Sistema de Registro de Empresas
-Aplicacao principal
-"""
+"""Amicom - Sistema de Registro de Empresas."""
 
+from database import init_db
 from ui.main_window import MainWindow
 
+
 def main():
+    init_db()
     app = MainWindow()
     app.mainloop()
+
 
 if __name__ == '__main__':
     main()

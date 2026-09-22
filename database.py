@@ -3,34 +3,103 @@ from datetime import datetime
 
 DB_NAME = 'empresas.db'
 
+
 def get_connection():
-    """Cria e retorna uma conex˜ao com o banco de dados."""
+    """Cria e retorna uma conexao com o banco de dados local."""
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
 
+
 def init_db():
-    """Inicializa o banco de dados criando a tabela se n˜ao existir."""
+    """Inicializa as tabelas necessarias para o aplicativo."""
     conn = get_connection()
     cursor = conn.cursor()
-    
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS empresas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nome TEXT NOT NULL,
-            cnpj TEXT,
-            endereco TEXT,
-            telefone TEXT,
-            email TEXT,
-            segmento TEXT,
-            status TEXT DEFAULT 'ativa',
-            observacoes TEXT,
-            data_cadastro TEXT
+            localizacao TEXT,
+            data_cadastro TEXT NOT NULL
         )
     ''')
-    
+
     conn.commit()
     conn.close()
+
+
+def create_empresa(nome, localizacao=''):
+    """Salva uma nova empresa e retorna seu identificador."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        INSERT INTO empresas (nome, localizacao, data_cadastro)
+        VALUES (?, ?, ?)
+        ''',
+        (nome.strip(), localizacao.strip(), datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    )
+    empresa_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return empresa_id
+
+
+def list_empresas(search=''):
+    """Lista empresas, opcionalmente filtradas por nome ou localizacao."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    if search.strip():
+        termo = f'%{search.strip()}%'
+        cursor.execute(
+            '''
+            SELECT id, nome, localizacao, data_cadastro
+            FROM empresas
+            WHERE nome LIKE ? OR localizacao LIKE ?
+            ORDER BY nome COLLATE NOCASE
+            ''',
+            (termo, termo)
+        )
+    else:
+        cursor.execute(
+            '''
+            SELECT id, nome, localizacao, data_cadastro
+            FROM empresas
+            ORDER BY nome COLLATE NOCASE
+            '''
+        )
+
+    empresas = cursor.fetchall()
+    conn.close()
+    return empresas
+
+
+def update_empresa(empresa_id, nome, localizacao=''):
+    """Atualiza uma empresa cadastrada."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''
+        UPDATE empresas
+        SET nome = ?, localizacao = ?
+        WHERE id = ?
+        ''',
+        (nome.strip(), localizacao.strip(), empresa_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_empresa(empresa_id):
+    """Exclui uma empresa pelo identificador."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM empresas WHERE id = ?', (empresa_id,))
+    conn.commit()
+    conn.close()
+
 
 if __name__ == '__main__':
     init_db()
