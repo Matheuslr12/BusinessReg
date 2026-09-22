@@ -7,6 +7,7 @@ DB_NAME = 'empresas.db'
 def get_connection():
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA foreign_keys = ON')
     return conn
 
 
@@ -41,6 +42,19 @@ def init_db():
             obrigatorio INTEGER NOT NULL DEFAULT 0,
             data_cadastro TEXT NOT NULL,
             FOREIGN KEY (categoria_id) REFERENCES categorias(id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS valores_campos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            empresa_id INTEGER NOT NULL,
+            campo_id INTEGER NOT NULL,
+            valor TEXT,
+            data_atualizacao TEXT NOT NULL,
+            UNIQUE(empresa_id, campo_id),
+            FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE,
+            FOREIGN KEY (campo_id) REFERENCES campos(id) ON DELETE CASCADE
         )
     ''')
 
@@ -210,13 +224,23 @@ def list_campos(search=''):
     return campos
 
 
-def update_campo(campo_id, categoria_id, nome):
+def list_campos_por_categoria(categoria_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute(
-        '''UPDATE campos SET categoria_id = ?, nome = ? WHERE id = ?''',
-        (categoria_id, nome.strip(), campo_id)
+        '''SELECT id, categoria_id, nome FROM campos
+           WHERE categoria_id = ? ORDER BY nome COLLATE NOCASE''',
+        (categoria_id,)
     )
+    campos = cursor.fetchall()
+    conn.close()
+    return campos
+
+
+def update_campo(campo_id, categoria_id, nome):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('UPDATE campos SET categoria_id = ?, nome = ? WHERE id = ?', (categoria_id, nome.strip(), campo_id))
     conn.commit()
     conn.close()
 
@@ -225,6 +249,38 @@ def delete_campo(campo_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute('DELETE FROM campos WHERE id = ?', (campo_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_valores_empresa_categoria(empresa_id, categoria_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''SELECT valores_campos.campo_id, valores_campos.valor
+           FROM valores_campos
+           INNER JOIN campos ON campos.id = valores_campos.campo_id
+           WHERE valores_campos.empresa_id = ? AND campos.categoria_id = ?''',
+        (empresa_id, categoria_id)
+    )
+    valores = {row['campo_id']: row['valor'] or '' for row in cursor.fetchall()}
+    conn.close()
+    return valores
+
+
+def save_valores_empresa(empresa_id, valores):
+    conn = get_connection()
+    cursor = conn.cursor()
+    data_atualizacao = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    for campo_id, valor in valores.items():
+        cursor.execute(
+            '''INSERT INTO valores_campos (empresa_id, campo_id, valor, data_atualizacao)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(empresa_id, campo_id)
+               DO UPDATE SET valor = excluded.valor,
+                             data_atualizacao = excluded.data_atualizacao''',
+            (empresa_id, campo_id, valor.strip(), data_atualizacao)
+        )
     conn.commit()
     conn.close()
 
