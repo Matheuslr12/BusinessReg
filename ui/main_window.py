@@ -20,7 +20,7 @@ class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
         
-        self.title('BusinessReg')
+        self.title('Amicom')
         self.geometry('1000x600')
         self.minsize(800, 500)
         self.configure(bg=self.COLORS['bg_primary'])

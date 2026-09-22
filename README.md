@@ -1,11 +1,11 @@
-# BusinessReg - Registro de Empresas
+# Amicom - Registro de Empresas
 
-Aplicativo Python para registrar e gerenciar informações de empresas de forma prática.
+Aplicativo Python para registrar e gerenciar informacoes de empresas de forma pratica.
 
 ## Funcionalidades
 
 - Cadastrar novas empresas
-- Editar informações
+- Editar informacoes
 - Excluir empresas
 - Buscar e listar empresas
 - Armazenamento em SQLite
@@ -14,11 +14,11 @@ Aplicativo Python para registrar e gerenciar informações de empresas de forma 
 
 - Python 3.x
 - SQLite
-- Tkinter (interface gráfica)
+- Tkinter (interface grafica)
 
 ## Como usar
 
-1. Clone o repositó´´´rio
+1. Clone o repositorio
 2. Execute `python main.py`
 
 ## Estrutura do Projeto
@@ -26,7 +26,7 @@ Aplicativo Python para registrar e gerenciar informações de empresas de forma 
 ```
 BusinessReg/
 ├── main.py          # Arquivo principal
-├── database.py      # Configuraç´´˜ao do banco de dados
+├── database.py      # Configuracao do banco de dados
 ├── models.py        # Modelo de dados
 └── README.md        # Este arquivo
 ```

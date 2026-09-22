@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-BusinessReg - Sistema de Registro de Empresas
+Amicom - Sistema de Registro de Empresas
+Aplicacao principal
 """
 
 from ui.main_window import MainWindow

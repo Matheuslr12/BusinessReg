@@ -17,7 +17,7 @@ class MenuView(tk.Frame):
         
         title_label = tk.Label(
             center_frame,
-            text='BusinessReg',
+            text='Amicom',
             font=('Segoe UI', 32, 'bold'),
             fg=self.colors['accent'],
             bg=self.colors['bg_primary']
