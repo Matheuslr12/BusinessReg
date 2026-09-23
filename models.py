@@ -1,51 +1,77 @@
+"""Modelos de dados para o sistema BusinessReg."""
+
+from dataclasses import dataclass, field
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
+
+@dataclass
 class Empresa:
-    """Modelo de dados para Empresa."""
-    
-    def __init__(self, id=None, nome='', cnpj='', endereco='', 
-                 telefone='', email='', segmento='', 
-                 status='ativa', observacoes='', data_cadastro=None):
-        self.id = id
-        self.nome = nome
-        self.cnpj = cnpj
-        self.endereco = endereco
-        self.telefone = telefone
-        self.email = email
-        self.segmento = segmento
-        self.status = status
-        self.observacoes = observacoes
-        self.data_cadastro = data_cadastro or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    def to_dict(self):
-        """Converte o objeto para dicion˜ario."""
-        return {
-            'id': self.id,
-            'nome': self.nome,
-            'cnpj': self.cnpj,
-            'endereco': self.endereco,
-            'telefone': self.telefone,
-            'email': self.email,
-            'segmento': self.segmento,
-            'status': self.status,
-            'observacoes': self.observacoes,
-            'data_cadastro': self.data_cadastro
-        }
-    
-    @classmethod
-    def from_row(cls, row):
-        """Cria uma instˆancia a partir de uma linha do banco de dados."""
-        if row is None:
-            return None
-        return cls(
-            id=row['id'],
-            nome=row['nome'],
-            cnpj=row['cnpj'],
-            endereco=row['endereco'],
-            telefone=row['telefone'],
-            email=row['email'],
-            segmento=row['segmento'],
-            status=row['status'],
-            observacoes=row['observacoes'],
-            data_cadastro=row['data_cadastro']
-        )
+    id: Optional[int] = None
+    nome: str = ""
+    cnpj: str = ""
+    endereco: str = ""
+    telefone: str = ""
+    email: str = ""
+    ativo: bool = True
+    data_criacao: Optional[datetime] = None
+
+
+@dataclass
+class Campo:
+    id: Optional[int] = None
+    nome: str = ""
+    tipo: str = ""
+    obrigatorio: bool = False
+    opcoes_select: Optional[str] = None
+    ordem: int = 0
+    ativo: bool = True
+    data_criacao: Optional[datetime] = None
+
+
+@dataclass
+class Categoria:
+    id: Optional[int] = None
+    nome: str = ""
+    descricao: str = ""
+    cor: str = "#000000"
+    icone: str = ""
+    ativo: bool = True
+    data_criacao: Optional[datetime] = None
+
+
+@dataclass
+class Cadastro:
+    id: Optional[int] = None
+    categoria_id: Optional[int] = None
+    empresa_id: Optional[int] = None
+    valores: Dict[str, Any] = field(default_factory=dict)
+    data_criacao: Optional[datetime] = None
+    data_modificacao: Optional[datetime] = None
+
+
+@dataclass
+class User:
+    """Modelo de Usuário com papéis e verificação de permissão."""
+    id: Optional[int] = None
+    nome: str = ""
+    email: str = ""
+    senha_hash: str = ""
+    papel: str = "usuario"
+    ativo: bool = True
+    data_criacao: Optional[datetime] = None
+    data_ultimo_login: Optional[datetime] = None
+
+    def eh_master(self) -> bool:
+        return self.papel == "master"
+
+    def eh_administrador(self) -> bool:
+        return self.papel in ("master", "administrador")
+
+    def pode_acessar(self, modulo: str) -> bool:
+        if self.papel == "master":
+            return True
+        elif self.papel == "administrador":
+            return modulo in ("cadastros", "gerenciamento", "configuracoes")
+        else:
+            return modulo == "cadastros"
