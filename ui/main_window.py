@@ -9,7 +9,7 @@ from ui.campos_view import CamposView
 
 
 class MainWindow(tk.Tk):
-    """Janela principal com navegacao entre telas."""
+    """Janela principal com navegação entre telas."""
 
     COLORS = {
         'bg_primary': '#1a1a2e',
@@ -23,14 +23,11 @@ class MainWindow(tk.Tk):
 
     def __init__(self):
         super().__init__()
-
         self.title('Amicom')
         self.geometry('1000x600')
         self.minsize(800, 600)
         self.configure(bg=self.COLORS['bg_primary'])
-
         self.current_view = None
-
         self.create_views()
         self.show_menu()
         self.center_window()
@@ -54,10 +51,15 @@ class MainWindow(tk.Tk):
         self.categorias_view = CategoriasView(self, self.COLORS, self.show_gerenciamento)
         self.campos_view = CamposView(self, self.COLORS, self.show_gerenciamento)
 
+    def refresh_view(self, view):
+        refresh_method = getattr(view, 'refresh_view', None)
+        if callable(refresh_method):
+            refresh_method()
+
     def navigate(self, screen):
         self.hide_all()
-
         if screen == 'cadastros':
+            self.refresh_view(self.cadastros_view)
             self.cadastros_view.pack(fill='both', expand=True)
             self.current_view = 'cadastros'
         elif screen == 'gerenciamento':
@@ -69,14 +71,16 @@ class MainWindow(tk.Tk):
 
     def navigate_submenu(self, screen):
         self.hide_all()
-
         if screen == 'empresas':
+            self.refresh_view(self.empresas_view)
             self.empresas_view.pack(fill='both', expand=True)
             self.current_view = 'empresas'
         elif screen == 'categorias':
+            self.refresh_view(self.categorias_view)
             self.categorias_view.pack(fill='both', expand=True)
             self.current_view = 'categorias'
         elif screen == 'campos':
+            self.refresh_view(self.campos_view)
             self.campos_view.pack(fill='both', expand=True)
             self.current_view = 'campos'
 
