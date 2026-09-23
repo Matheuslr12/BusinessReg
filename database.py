@@ -1,438 +1,214 @@
-import hashlib
-import hmac
-import os
+"""Camada de acesso ao banco de dados SQLite para BusinessReg."""
+
 import sqlite3
+import hashlib
+import secrets
+from contextlib import contextmanager
 from datetime import datetime
+from typing import List, Optional
 
-DB_NAME = 'empresas.db'
-PASSWORD_ITERATIONS = 200_000
-
-
-def get_connection():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA foreign_keys = ON')
-    return conn
+from models import User
 
 
-def column_exists(cursor, table_name, column_name):
-    cursor.execute(f'PRAGMA table_info({table_name})')
-    return any(column['name'] == column_name for column in cursor.fetchall())
+class Database:
+    def __init__(self, db_path: str = "businessreg.db"):
+        self.db_path = db_path
+        self.inicializar_banco()
 
+    @contextmanager
+    def conectar(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
-def hash_password(password, salt=None):
-    salt = salt or os.urandom(16)
-    password_hash = hashlib.pbkdf2_hmac(
-        'sha256', password.encode('utf-8'), salt, PASSWORD_ITERATIONS
-    )
-    return salt.hex(), password_hash.hex()
+    def inicializar_banco(self):
+        with self.conectar() as conn:
+            cursor = conn.cursor()
+            cursor.execute("CREATE TABLE IF NOT EXISTS empresas (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cnpj TEXT UNIQUE, endereco TEXT, telefone TEXT, email TEXT, ativo INTEGER DEFAULT 1, data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+            cursor.execute("CREATE TABLE IF NOT EXISTS campos (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, tipo TEXT NOT NULL, obrigatorio INTEGER DEFAULT 0, opcoes_select TEXT, ordem INTEGER DEFAULT 0, ativo INTEGER DEFAULT 1, data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+            cursor.execute("CREATE TABLE IF NOT EXISTS categorias (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL UNIQUE, descricao TEXT, cor TEXT DEFAULT '#000000', icone TEXT, ativo INTEGER DEFAULT 1, data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+            cursor.execute("CREATE TABLE IF NOT EXISTS cadastros (id INTEGER PRIMARY KEY AUTOINCREMENT, categoria_id INTEGER, empresa_id INTEGER, valores TEXT NOT NULL DEFAULT '{}', data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP, data_modificacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (categoria_id) REFERENCES categorias(id), FOREIGN KEY (empresa_id) REFERENCES empresas(id))")
+            cursor.execute("CREATE TABLE IF NOT EXISTS usuarios (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, email TEXT NOT NULL UNIQUE COLLATE NOCASE, senha_hash TEXT NOT NULL, papel TEXT NOT NULL DEFAULT 'usuario' CHECK(papel IN ('master', 'administrador', 'usuario')), ativo INTEGER NOT NULL DEFAULT 1, data_criacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP, data_ultimo_login TIMESTAMP)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios(email)")
+            cursor.execute("SELECT COUNT(*) FROM usuarios")
+            if cursor.fetchone()[0] == 0:
+                cursor.execute("INSERT INTO usuarios (nome, email, senha_hash, papel) VALUES (?, ?, ?, 'master')", ("Master", "master@businessreg.local", self.gerar_hash_senha("master123")))
 
+    @staticmethod
+    def gerar_hash_senha(senha: str, sal: Optional[str] = None) -> str:
+        if not senha:
+            raise ValueError("A senha não pode ser vazia.")
+        if sal is None:
+            sal = secrets.token_hex(16)
+        senha_hash = hashlib.pbkdf2_hmac("sha256", senha.encode("utf-8"), sal.encode("utf-8"), 260000).hex()
+        return f"{sal}${senha_hash}"
 
-def verify_password(password, salt_hex, password_hash_hex):
-    password_hash = hashlib.pbkdf2_hmac(
-        'sha256', password.encode('utf-8'), bytes.fromhex(salt_hex), PASSWORD_ITERATIONS
-    )
-    return hmac.compare_digest(password_hash.hex(), password_hash_hex)
+    @staticmethod
+    def verificar_senha(senha: str, senha_hash: str) -> bool:
+        try:
+            sal, hash_armazenado = senha_hash.split("$", 1)
+            calculado = Database.gerar_hash_senha(senha, sal).split("$", 1)[1]
+            return secrets.compare_digest(calculado, hash_armazenado)
+        except (ValueError, AttributeError):
+            return False
 
+    def _row_para_user(self, row) -> Optional[User]:
+        if row is None:
+            return None
+        return User(id=row["id"], nome=row["nome"], email=row["email"], senha_hash=row["senha_hash"], papel=row["papel"], ativo=bool(row["ativo"]), data_criacao=row["data_criacao"], data_ultimo_login=row["data_ultimo_login"])
 
-def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
+    def listar_usuarios(self, busca: str = "") -> List[User]:
+        with self.conectar() as conn:
+            if busca.strip():
+                termo = f"%{busca.strip()}%"
+                rows = conn.execute("SELECT * FROM usuarios WHERE nome LIKE ? OR email LIKE ? ORDER BY CASE papel WHEN 'master' THEN 0 WHEN 'administrador' THEN 1 ELSE 2 END, nome", (termo, termo)).fetchall()
+            else:
+                rows = conn.execute("SELECT * FROM usuarios ORDER BY CASE papel WHEN 'master' THEN 0 WHEN 'administrador' THEN 1 ELSE 2 END, nome").fetchall()
+            return [self._row_para_user(row) for row in rows]
 
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS empresas (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT NOT NULL,
-            localizacao TEXT,
-            data_cadastro TEXT NOT NULL
-        )
-    ''')
+    def obter_usuario(self, usuario_id: int) -> Optional[User]:
+        with self.conectar() as conn:
+            return self._row_para_user(conn.execute("SELECT * FROM usuarios WHERE id = ?", (usuario_id,)).fetchone())
 
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS categorias (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT NOT NULL,
-            descricao TEXT,
-            ordem INTEGER NOT NULL DEFAULT 0,
-            data_cadastro TEXT NOT NULL
-        )
-    ''')
+    def criar_usuario(self, nome: str, email: str, senha: str, papel: str = "usuario", ativo: bool = True) -> int:
+        if papel not in ("administrador", "usuario"):
+            raise ValueError("O papel deve ser Administrador ou Usuário.")
+        if not nome.strip() or not email.strip() or not senha:
+            raise ValueError("Nome, e-mail e senha são obrigatórios.")
+        try:
+            with self.conectar() as conn:
+                cursor = conn.execute("INSERT INTO usuarios (nome, email, senha_hash, papel, ativo) VALUES (?, ?, ?, ?, ?)", (nome.strip(), email.strip().lower(), self.gerar_hash_senha(senha), papel, int(ativo)))
+                return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            raise ValueError("Já existe um usuário com este e-mail.")
 
-    if not column_exists(cursor, 'categorias', 'ordem'):
-        cursor.execute('ALTER TABLE categorias ADD COLUMN ordem INTEGER NOT NULL DEFAULT 0')
+    def atualizar_usuario(self, usuario_id: int, nome: str, email: str, papel: str, ativo: bool, senha: str = ""):
+        usuario = self.obter_usuario(usuario_id)
+        if not usuario:
+            raise ValueError("Usuário não encontrado.")
+        if usuario.eh_master():
+            papel, ativo = "master", True
+        elif papel not in ("administrador", "usuario"):
+            raise ValueError("O papel deve ser Administrador ou Usuário.")
+        if not nome.strip() or not email.strip():
+            raise ValueError("Nome e e-mail são obrigatórios.")
+        try:
+            with self.conectar() as conn:
+                if senha:
+                    conn.execute("UPDATE usuarios SET nome=?, email=?, papel=?, ativo=?, senha_hash=? WHERE id=?", (nome.strip(), email.strip().lower(), papel, int(ativo), self.gerar_hash_senha(senha), usuario_id))
+                else:
+                    conn.execute("UPDATE usuarios SET nome=?, email=?, papel=?, ativo=? WHERE id=?", (nome.strip(), email.strip().lower(), papel, int(ativo), usuario_id))
+        except sqlite3.IntegrityError:
+            raise ValueError("Já existe um usuário com este e-mail.")
 
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS campos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            categoria_id INTEGER NOT NULL,
-            nome TEXT NOT NULL,
-            tipo TEXT NOT NULL DEFAULT 'Texto',
-            obrigatorio INTEGER NOT NULL DEFAULT 0,
-            ordem INTEGER NOT NULL DEFAULT 0,
-            data_cadastro TEXT NOT NULL,
-            FOREIGN KEY (categoria_id) REFERENCES categorias(id)
-        )
-    ''')
+    def excluir_usuario(self, usuario_id: int):
+        usuario = self.obter_usuario(usuario_id)
+        if not usuario:
+            raise ValueError("Usuário não encontrado.")
+        if usuario.eh_master():
+            raise ValueError("A conta Master não pode ser excluída.")
+        with self.conectar() as conn:
+            conn.execute("DELETE FROM usuarios WHERE id = ?", (usuario_id,))
 
-    if not column_exists(cursor, 'campos', 'ordem'):
-        cursor.execute('ALTER TABLE campos ADD COLUMN ordem INTEGER NOT NULL DEFAULT 0')
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS valores_campos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            empresa_id INTEGER NOT NULL,
-            campo_id INTEGER NOT NULL,
-            valor TEXT,
-            data_atualizacao TEXT NOT NULL,
-            UNIQUE(empresa_id, campo_id),
-            FOREIGN KEY (empresa_id) REFERENCES empresas(id) ON DELETE CASCADE,
-            FOREIGN KEY (campo_id) REFERENCES campos(id) ON DELETE CASCADE
-        )
-    ''')
-
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario TEXT NOT NULL UNIQUE,
-            senha_salt TEXT NOT NULL,
-            senha_hash TEXT NOT NULL,
-            papel TEXT NOT NULL DEFAULT 'master',
-            data_criacao TEXT NOT NULL
-        )
-    ''')
-
-    cursor.execute('SELECT id FROM categorias WHERE ordem = 0 ORDER BY id')
-    for position, categoria in enumerate(cursor.fetchall(), start=1):
-        cursor.execute('UPDATE categorias SET ordem = ? WHERE id = ?', (position, categoria['id']))
-
-    cursor.execute('SELECT id, categoria_id FROM campos WHERE ordem = 0 ORDER BY categoria_id, id')
-    campos_sem_ordem = cursor.fetchall()
-    current_category = None
-    position = 0
-    for campo in campos_sem_ordem:
-        if campo['categoria_id'] != current_category:
-            current_category = campo['categoria_id']
-            cursor.execute('SELECT COALESCE(MAX(ordem), 0) AS max_ordem FROM campos WHERE categoria_id = ?', (current_category,))
-            position = cursor.fetchone()['max_ordem']
-        position += 1
-        cursor.execute('UPDATE campos SET ordem = ? WHERE id = ?', (position, campo['id']))
-
-    conn.commit()
-    conn.close()
-
-
-def master_exists():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id FROM usuarios WHERE usuario = 'master' LIMIT 1")
-    exists = cursor.fetchone() is not None
-    conn.close()
-    return exists
-
-
-def create_master_user(password):
-    salt, password_hash = hash_password(password)
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        '''INSERT INTO usuarios (usuario, senha_salt, senha_hash, papel, data_criacao)
-           VALUES ('master', ?, ?, 'master', ?)''',
-        (salt, password_hash, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    )
-    conn.commit()
-    conn.close()
-
-
-def authenticate_user(usuario, password):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        'SELECT usuario, senha_salt, senha_hash, papel FROM usuarios WHERE usuario = ?',
-        (usuario.strip(),)
-    )
-    user = cursor.fetchone()
-    conn.close()
-    if not user:
+    def autenticar_usuario(self, email: str, senha: str) -> Optional[User]:
+        with self.conectar() as conn:
+            user = self._row_para_user(conn.execute("SELECT * FROM usuarios WHERE email=? AND ativo=1", (email.strip().lower(),)).fetchone())
+            if user and self.verificar_senha(senha, user.senha_hash):
+                conn.execute("UPDATE usuarios SET data_ultimo_login=CURRENT_TIMESTAMP WHERE id=?", (user.id,))
+                return user
         return None
-    if verify_password(password, user['senha_salt'], user['senha_hash']):
-        return {'usuario': user['usuario'], 'papel': user['papel']}
-    return None
 
+    def listar_empresas(self, apenas_ativas=False):
+        with self.conectar() as conn:
+            sql = "SELECT * FROM empresas" + (" WHERE ativo=1" if apenas_ativas else "") + " ORDER BY nome"
+            return conn.execute(sql).fetchall()
 
-def create_empresa(nome, localizacao=''):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        '''INSERT INTO empresas (nome, localizacao, data_cadastro)
-           VALUES (?, ?, ?)''',
-        (nome.strip(), localizacao.strip(), datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    )
-    empresa_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return empresa_id
+    def obter_empresa(self, empresa_id):
+        with self.conectar() as conn:
+            return conn.execute("SELECT * FROM empresas WHERE id=?", (empresa_id,)).fetchone()
 
+    def criar_empresa(self, nome, cnpj="", endereco="", telefone="", email="", ativo=True):
+        with self.conectar() as conn:
+            return conn.execute("INSERT INTO empresas (nome,cnpj,endereco,telefone,email,ativo) VALUES (?,?,?,?,?,?)", (nome,cnpj or None,endereco,telefone,email,int(ativo))).lastrowid
 
-def get_empresa(empresa_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, nome, localizacao, data_cadastro FROM empresas WHERE id = ?', (empresa_id,))
-    empresa = cursor.fetchone()
-    conn.close()
-    return empresa
+    def atualizar_empresa(self, empresa_id, nome, cnpj="", endereco="", telefone="", email="", ativo=True):
+        with self.conectar() as conn:
+            conn.execute("UPDATE empresas SET nome=?,cnpj=?,endereco=?,telefone=?,email=?,ativo=? WHERE id=?", (nome,cnpj or None,endereco,telefone,email,int(ativo),empresa_id))
 
+    def excluir_empresa(self, empresa_id):
+        with self.conectar() as conn:
+            conn.execute("DELETE FROM empresas WHERE id=?", (empresa_id,))
 
-def list_empresas(search=''):
-    conn = get_connection()
-    cursor = conn.cursor()
-    if search.strip():
-        termo = f'%{search.strip()}%'
-        cursor.execute(
-            '''SELECT id, nome, localizacao, data_cadastro FROM empresas
-               WHERE nome LIKE ? OR localizacao LIKE ? ORDER BY nome COLLATE NOCASE''',
-            (termo, termo)
-        )
-    else:
-        cursor.execute('SELECT id, nome, localizacao, data_cadastro FROM empresas ORDER BY nome COLLATE NOCASE')
-    empresas = cursor.fetchall()
-    conn.close()
-    return empresas
+    def listar_campos(self, apenas_ativos=False):
+        with self.conectar() as conn:
+            sql = "SELECT * FROM campos" + (" WHERE ativo=1" if apenas_ativos else "") + " ORDER BY ordem,nome"
+            return conn.execute(sql).fetchall()
 
+    def obter_campo(self, campo_id):
+        with self.conectar() as conn:
+            return conn.execute("SELECT * FROM campos WHERE id=?", (campo_id,)).fetchone()
 
-def update_empresa(empresa_id, nome, localizacao=''):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('UPDATE empresas SET nome = ?, localizacao = ? WHERE id = ?', (nome.strip(), localizacao.strip(), empresa_id))
-    conn.commit()
-    conn.close()
+    def criar_campo(self, nome, tipo, obrigatorio=False, opcoes_select="", ordem=0, ativo=True):
+        with self.conectar() as conn:
+            return conn.execute("INSERT INTO campos (nome,tipo,obrigatorio,opcoes_select,ordem,ativo) VALUES (?,?,?,?,?,?)", (nome,tipo,int(obrigatorio),opcoes_select,ordem,int(ativo))).lastrowid
 
+    def atualizar_campo(self, campo_id, nome, tipo, obrigatorio=False, opcoes_select="", ordem=0, ativo=True):
+        with self.conectar() as conn:
+            conn.execute("UPDATE campos SET nome=?,tipo=?,obrigatorio=?,opcoes_select=?,ordem=?,ativo=? WHERE id=?", (nome,tipo,int(obrigatorio),opcoes_select,ordem,int(ativo),campo_id))
 
-def delete_empresa(empresa_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM empresas WHERE id = ?', (empresa_id,))
-    conn.commit()
-    conn.close()
+    def excluir_campo(self, campo_id):
+        with self.conectar() as conn:
+            conn.execute("DELETE FROM campos WHERE id=?", (campo_id,))
 
+    def listar_categorias(self, apenas_ativas=False):
+        with self.conectar() as conn:
+            sql = "SELECT * FROM categorias" + (" WHERE ativo=1" if apenas_ativas else "") + " ORDER BY nome"
+            return conn.execute(sql).fetchall()
 
-def create_categoria(nome, descricao=''):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT COALESCE(MAX(ordem), 0) + 1 AS proxima_ordem FROM categorias')
-    ordem = cursor.fetchone()['proxima_ordem']
-    cursor.execute(
-        '''INSERT INTO categorias (nome, descricao, ordem, data_cadastro)
-           VALUES (?, ?, ?, ?)''',
-        (nome.strip(), descricao.strip(), ordem, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    )
-    categoria_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return categoria_id
+    def obter_categoria(self, categoria_id):
+        with self.conectar() as conn:
+            return conn.execute("SELECT * FROM categorias WHERE id=?", (categoria_id,)).fetchone()
 
+    def criar_categoria(self, nome, descricao="", cor="#000000", icone="", ativo=True):
+        with self.conectar() as conn:
+            return conn.execute("INSERT INTO categorias (nome,descricao,cor,icone,ativo) VALUES (?,?,?,?,?)", (nome,descricao,cor,icone,int(ativo))).lastrowid
 
-def get_categoria(categoria_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, nome, descricao, ordem, data_cadastro FROM categorias WHERE id = ?', (categoria_id,))
-    categoria = cursor.fetchone()
-    conn.close()
-    return categoria
+    def atualizar_categoria(self, categoria_id, nome, descricao="", cor="#000000", icone="", ativo=True):
+        with self.conectar() as conn:
+            conn.execute("UPDATE categorias SET nome=?,descricao=?,cor=?,icone=?,ativo=? WHERE id=?", (nome,descricao,cor,icone,int(ativo),categoria_id))
 
+    def excluir_categoria(self, categoria_id):
+        with self.conectar() as conn:
+            conn.execute("DELETE FROM categorias WHERE id=?", (categoria_id,))
 
-def list_categorias(search=''):
-    conn = get_connection()
-    cursor = conn.cursor()
-    if search.strip():
-        termo = f'%{search.strip()}%'
-        cursor.execute(
-            '''SELECT id, nome, descricao, ordem, data_cadastro FROM categorias
-               WHERE nome LIKE ? OR descricao LIKE ? ORDER BY ordem, id''',
-            (termo, termo)
-        )
-    else:
-        cursor.execute('SELECT id, nome, descricao, ordem, data_cadastro FROM categorias ORDER BY ordem, id')
-    categorias = cursor.fetchall()
-    conn.close()
-    return categorias
+    def listar_cadastros(self, categoria_id=None, empresa_id=None):
+        with self.conectar() as conn:
+            sql, params = "SELECT * FROM cadastros WHERE 1=1", []
+            if categoria_id: sql += " AND categoria_id=?"; params.append(categoria_id)
+            if empresa_id: sql += " AND empresa_id=?"; params.append(empresa_id)
+            return conn.execute(sql + " ORDER BY data_criacao DESC", params).fetchall()
 
+    def obter_cadastro(self, cadastro_id):
+        with self.conectar() as conn:
+            return conn.execute("SELECT * FROM cadastros WHERE id=?", (cadastro_id,)).fetchone()
 
-def update_categoria(categoria_id, nome, descricao=''):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('UPDATE categorias SET nome = ?, descricao = ? WHERE id = ?', (nome.strip(), descricao.strip(), categoria_id))
-    conn.commit()
-    conn.close()
+    def criar_cadastro(self, categoria_id, empresa_id, valores):
+        import json
+        with self.conectar() as conn:
+            return conn.execute("INSERT INTO cadastros (categoria_id,empresa_id,valores) VALUES (?,?,?)", (categoria_id,empresa_id,json.dumps(valores,ensure_ascii=False))).lastrowid
 
+    def atualizar_cadastro(self, cadastro_id, categoria_id, empresa_id, valores):
+        import json
+        with self.conectar() as conn:
+            conn.execute("UPDATE cadastros SET categoria_id=?,empresa_id=?,valores=?,data_modificacao=CURRENT_TIMESTAMP WHERE id=?", (categoria_id,empresa_id,json.dumps(valores,ensure_ascii=False),cadastro_id))
 
-def move_categoria(categoria_id, direction):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, ordem FROM categorias WHERE id = ?', (categoria_id,))
-    categoria = cursor.fetchone()
-    if not categoria:
-        conn.close()
-        return False
-    operator = '<' if direction == 'up' else '>'
-    order_by = 'DESC' if direction == 'up' else 'ASC'
-    cursor.execute(
-        f'''SELECT id, ordem FROM categorias
-            WHERE ordem {operator} ? ORDER BY ordem {order_by}, id {order_by} LIMIT 1''',
-        (categoria['ordem'],)
-    )
-    neighbor = cursor.fetchone()
-    if not neighbor:
-        conn.close()
-        return False
-    cursor.execute('UPDATE categorias SET ordem = ? WHERE id = ?', (neighbor['ordem'], categoria['id']))
-    cursor.execute('UPDATE categorias SET ordem = ? WHERE id = ?', (categoria['ordem'], neighbor['id']))
-    conn.commit()
-    conn.close()
-    return True
-
-
-def delete_categoria(categoria_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM categorias WHERE id = ?', (categoria_id,))
-    conn.commit()
-    conn.close()
-
-
-def create_campo(categoria_id, nome):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT COALESCE(MAX(ordem), 0) + 1 AS proxima_ordem FROM campos WHERE categoria_id = ?', (categoria_id,))
-    ordem = cursor.fetchone()['proxima_ordem']
-    cursor.execute(
-        '''INSERT INTO campos (categoria_id, nome, tipo, obrigatorio, ordem, data_cadastro)
-           VALUES (?, ?, 'Texto', 0, ?, ?)''',
-        (categoria_id, nome.strip(), ordem, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    )
-    campo_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return campo_id
-
-
-def get_campo(campo_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, categoria_id, nome, ordem, data_cadastro FROM campos WHERE id = ?', (campo_id,))
-    campo = cursor.fetchone()
-    conn.close()
-    return campo
-
-
-def list_campos(search=''):
-    conn = get_connection()
-    cursor = conn.cursor()
-    if search.strip():
-        termo = f'%{search.strip()}%'
-        cursor.execute(
-            '''SELECT campos.id, campos.categoria_id, campos.nome, campos.ordem,
-                      categorias.nome AS categoria_nome
-               FROM campos INNER JOIN categorias ON categorias.id = campos.categoria_id
-               WHERE campos.nome LIKE ? OR categorias.nome LIKE ?
-               ORDER BY categorias.ordem, campos.ordem, campos.id''',
-            (termo, termo)
-        )
-    else:
-        cursor.execute(
-            '''SELECT campos.id, campos.categoria_id, campos.nome, campos.ordem,
-                      categorias.nome AS categoria_nome
-               FROM campos INNER JOIN categorias ON categorias.id = campos.categoria_id
-               ORDER BY categorias.ordem, campos.ordem, campos.id'''
-        )
-    campos = cursor.fetchall()
-    conn.close()
-    return campos
-
-
-def list_campos_por_categoria(categoria_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, categoria_id, nome, ordem FROM campos WHERE categoria_id = ? ORDER BY ordem, id', (categoria_id,))
-    campos = cursor.fetchall()
-    conn.close()
-    return campos
-
-
-def update_campo(campo_id, categoria_id, nome):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT categoria_id FROM campos WHERE id = ?', (campo_id,))
-    campo_atual = cursor.fetchone()
-    if campo_atual and campo_atual['categoria_id'] != categoria_id:
-        cursor.execute('SELECT COALESCE(MAX(ordem), 0) + 1 AS proxima_ordem FROM campos WHERE categoria_id = ?', (categoria_id,))
-        nova_ordem = cursor.fetchone()['proxima_ordem']
-        cursor.execute('UPDATE campos SET categoria_id = ?, nome = ?, ordem = ? WHERE id = ?', (categoria_id, nome.strip(), nova_ordem, campo_id))
-    else:
-        cursor.execute('UPDATE campos SET nome = ? WHERE id = ?', (nome.strip(), campo_id))
-    conn.commit()
-    conn.close()
-
-
-def move_campo(campo_id, direction):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT id, categoria_id, ordem FROM campos WHERE id = ?', (campo_id,))
-    campo = cursor.fetchone()
-    if not campo:
-        conn.close()
-        return False
-    operator = '<' if direction == 'up' else '>'
-    order_by = 'DESC' if direction == 'up' else 'ASC'
-    cursor.execute(
-        f'''SELECT id, ordem FROM campos
-            WHERE categoria_id = ? AND ordem {operator} ?
-            ORDER BY ordem {order_by}, id {order_by} LIMIT 1''',
-        (campo['categoria_id'], campo['ordem'])
-    )
-    neighbor = cursor.fetchone()
-    if not neighbor:
-        conn.close()
-        return False
-    cursor.execute('UPDATE campos SET ordem = ? WHERE id = ?', (neighbor['ordem'], campo['id']))
-    cursor.execute('UPDATE campos SET ordem = ? WHERE id = ?', (campo['ordem'], neighbor['id']))
-    conn.commit()
-    conn.close()
-    return True
-
-
-def delete_campo(campo_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute('DELETE FROM campos WHERE id = ?', (campo_id,))
-    conn.commit()
-    conn.close()
-
-
-def get_valores_empresa_categoria(empresa_id, categoria_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        '''SELECT valores_campos.campo_id, valores_campos.valor
-           FROM valores_campos INNER JOIN campos ON campos.id = valores_campos.campo_id
-           WHERE valores_campos.empresa_id = ? AND campos.categoria_id = ?''',
-        (empresa_id, categoria_id)
-    )
-    valores = {row['campo_id']: row['valor'] or '' for row in cursor.fetchall()}
-    conn.close()
-    return valores
-
-
-def save_valores_empresa(empresa_id, valores):
-    conn = get_connection()
-    cursor = conn.cursor()
-    data_atualizacao = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    for campo_id, valor in valores.items():
-        cursor.execute(
-            '''INSERT INTO valores_campos (empresa_id, campo_id, valor, data_atualizacao)
-               VALUES (?, ?, ?, ?)
-               ON CONFLICT(empresa_id, campo_id)
-               DO UPDATE SET valor = excluded.valor, data_atualizacao = excluded.data_atualizacao''',
-            (empresa_id, campo_id, valor.strip(), data_atualizacao)
-        )
-    conn.commit()
-    conn.close()
+    def excluir_cadastro(self, cadastro_id):
+        with self.conectar() as conn:
+            conn.execute("DELETE FROM cadastros WHERE id=?", (cadastro_id,))
