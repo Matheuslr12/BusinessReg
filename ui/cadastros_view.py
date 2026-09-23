@@ -188,6 +188,38 @@ class CadastrosView(tk.Frame):
             widget.destroy()
         self.field_entries = {}
 
+    def create_scrollable_content(self):
+        wrapper = tk.Frame(self.content, bg=self.colors['bg_primary'])
+        wrapper.pack(fill='both', expand=True)
+
+        canvas = tk.Canvas(
+            wrapper, bg=self.colors['bg_primary'],
+            highlightthickness=0, borderwidth=0
+        )
+        scrollbar = ttk.Scrollbar(wrapper, orient='vertical', command=canvas.yview)
+        scroll_frame = tk.Frame(canvas, bg=self.colors['bg_primary'])
+
+        scroll_frame.bind(
+            '<Configure>',
+            lambda event: canvas.configure(scrollregion=canvas.bbox('all'))
+        )
+        canvas_window = canvas.create_window((0, 0), window=scroll_frame, anchor='nw')
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.bind(
+            '<Configure>',
+            lambda event: canvas.itemconfigure(canvas_window, width=event.width)
+        )
+
+        canvas.pack(side='left', fill='both', expand=True)
+        scrollbar.pack(side='right', fill='y')
+
+        self.bind_scroll_events(scroll_frame, canvas)
+        return scroll_frame, canvas
+
+    def bind_scroll_events(self, widget, canvas):
+        widget.bind('<Enter>', lambda event: canvas.bind_all('<MouseWheel>', lambda mouse_event: canvas.yview_scroll(int(-mouse_event.delta / 120), 'units')))
+        widget.bind('<Leave>', lambda event: canvas.unbind_all('<MouseWheel>'))
+
     def show_welcome(self):
         self.clear_content()
         frame = tk.Frame(self.content, bg=self.colors['bg_primary'])
@@ -220,9 +252,8 @@ class CadastrosView(tk.Frame):
         self.clear_content()
         categoria = get_categoria(self.selected_category_id)
         campos = list_campos_por_categoria(self.selected_category_id)
-
-        container = tk.Frame(self.content, bg=self.colors['bg_primary'])
-        container.pack(fill='both', expand=True, padx=42, pady=34)
+        container, canvas = self.create_scrollable_content()
+        container.configure(padx=42, pady=34)
 
         tk.Label(
             container, text=categoria['nome'], font=('Segoe UI', 24, 'bold'),
@@ -268,9 +299,10 @@ class CadastrosView(tk.Frame):
             entry.pack(fill='x', ipady=10)
             entry.insert(0, values.get(campo['id'], ''))
             self.field_entries[campo['id']] = entry
+            self.bind_scroll_events(entry, canvas)
 
         actions = tk.Frame(container, bg=self.colors['bg_primary'])
-        actions.pack(fill='x', pady=(12, 0))
+        actions.pack(fill='x', pady=(12, 20))
         save_button = tk.Button(
             actions, text='Salvar informações', command=self.save_current_fields,
             font=('Segoe UI', 10, 'bold'), fg=self.colors['text_primary'],
@@ -281,6 +313,7 @@ class CadastrosView(tk.Frame):
         save_button.pack(anchor='e')
         save_button.bind('<Enter>', lambda event: event.widget.configure(bg=self.colors['bg_tertiary']))
         save_button.bind('<Leave>', lambda event: event.widget.configure(bg=self.colors['accent']))
+        self.bind_scroll_events(save_button, canvas)
 
     def save_current_fields(self):
         if not self.selected_company_id or not self.field_entries:
