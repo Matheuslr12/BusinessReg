@@ -34,9 +34,13 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nome TEXT NOT NULL,
             descricao TEXT,
+            ordem INTEGER NOT NULL DEFAULT 0,
             data_cadastro TEXT NOT NULL
         )
     ''')
+
+    if not column_exists(cursor, 'categorias', 'ordem'):
+        cursor.execute('ALTER TABLE categorias ADD COLUMN ordem INTEGER NOT NULL DEFAULT 0')
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS campos (
@@ -66,6 +70,10 @@ def init_db():
             FOREIGN KEY (campo_id) REFERENCES campos(id) ON DELETE CASCADE
         )
     ''')
+
+    cursor.execute('SELECT id FROM categorias WHERE ordem = 0 ORDER BY id')
+    for position, categoria in enumerate(cursor.fetchall(), start=1):
+        cursor.execute('UPDATE categorias SET ordem = ? WHERE id = ?', (position, categoria['id']))
 
     cursor.execute('SELECT id, categoria_id FROM campos WHERE ordem = 0 ORDER BY categoria_id, id')
     campos_sem_ordem = cursor.fetchall()
@@ -142,10 +150,12 @@ def delete_empresa(empresa_id):
 def create_categoria(nome, descricao=''):
     conn = get_connection()
     cursor = conn.cursor()
+    cursor.execute('SELECT COALESCE(MAX(ordem), 0) + 1 AS proxima_ordem FROM categorias')
+    ordem = cursor.fetchone()['proxima_ordem']
     cursor.execute(
-        '''INSERT INTO categorias (nome, descricao, data_cadastro)
-           VALUES (?, ?, ?)''',
-        (nome.strip(), descricao.strip(), datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        '''INSERT INTO categorias (nome, descricao, ordem, data_cadastro)
+           VALUES (?, ?, ?, ?)''',
+        (nome.strip(), descricao.strip(), ordem, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
     )
     categoria_id = cursor.lastrowid
     conn.commit()
@@ -156,7 +166,7 @@ def create_categoria(nome, descricao=''):
 def get_categoria(categoria_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute('SELECT id, nome, descricao, data_cadastro FROM categorias WHERE id = ?', (categoria_id,))
+    cursor.execute('SELECT id, nome, descricao, ordem, data_cadastro FROM categorias WHERE id = ?', (categoria_id,))
     categoria = cursor.fetchone()
     conn.close()
     return categoria
@@ -168,12 +178,12 @@ def list_categorias(search=''):
     if search.strip():
         termo = f'%{search.strip()}%'
         cursor.execute(
-            '''SELECT id, nome, descricao, data_cadastro FROM categorias
-               WHERE nome LIKE ? OR descricao LIKE ? ORDER BY nome COLLATE NOCASE''',
+            '''SELECT id, nome, descricao, ordem, data_cadastro FROM categorias
+               WHERE nome LIKE ? OR descricao LIKE ? ORDER BY ordem, id''',
             (termo, termo)
         )
     else:
-        cursor.execute('SELECT id, nome, descricao, data_cadastro FROM categorias ORDER BY nome COLLATE NOCASE')
+        cursor.execute('SELECT id, nome, descricao, ordem, data_cadastro FROM categorias ORDER BY ordem, id')
     categorias = cursor.fetchall()
     conn.close()
     return categorias
@@ -185,6 +195,36 @@ def update_categoria(categoria_id, nome, descricao=''):
     cursor.execute('UPDATE categorias SET nome = ?, descricao = ? WHERE id = ?', (nome.strip(), descricao.strip(), categoria_id))
     conn.commit()
     conn.close()
+
+
+def move_categoria(categoria_id, direction):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT id, ordem FROM categorias WHERE id = ?', (categoria_id,))
+    categoria = cursor.fetchone()
+    if not categoria:
+        conn.close()
+        return False
+
+    operator = '<' if direction == 'up' else '>'
+    order_by = 'DESC' if direction == 'up' else 'ASC'
+    cursor.execute(
+        f'''SELECT id, ordem FROM categorias
+            WHERE ordem {operator} ?
+            ORDER BY ordem {order_by}, id {order_by}
+            LIMIT 1''',
+        (categoria['ordem'],)
+    )
+    neighbor = cursor.fetchone()
+    if not neighbor:
+        conn.close()
+        return False
+
+    cursor.execute('UPDATE categorias SET ordem = ? WHERE id = ?', (neighbor['ordem'], categoria['id']))
+    cursor.execute('UPDATE categorias SET ordem = ? WHERE id = ?', (categoria['ordem'], neighbor['id']))
+    conn.commit()
+    conn.close()
+    return True
 
 
 def delete_categoria(categoria_id):
@@ -231,7 +271,7 @@ def list_campos(search=''):
                FROM campos
                INNER JOIN categorias ON categorias.id = campos.categoria_id
                WHERE campos.nome LIKE ? OR categorias.nome LIKE ?
-               ORDER BY categorias.nome COLLATE NOCASE, campos.ordem, campos.id''',
+               ORDER BY categorias.ordem, campos.ordem, campos.id''',
             (termo, termo)
         )
     else:
@@ -240,7 +280,7 @@ def list_campos(search=''):
                       categorias.nome AS categoria_nome
                FROM campos
                INNER JOIN categorias ON categorias.id = campos.categoria_id
-               ORDER BY categorias.nome COLLATE NOCASE, campos.ordem, campos.id'''
+               ORDER BY categorias.ordem, campos.ordem, campos.id'''
         )
     campos = cursor.fetchall()
     conn.close()
@@ -250,11 +290,7 @@ def list_campos(search=''):
 def list_campos_por_categoria(categoria_id):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        '''SELECT id, categoria_id, nome, ordem FROM campos
-           WHERE categoria_id = ? ORDER BY ordem, id''',
-        (categoria_id,)
-    )
+    cursor.execute('SELECT id, categoria_id, nome, ordem FROM campos WHERE categoria_id = ? ORDER BY ordem, id', (categoria_id,))
     campos = cursor.fetchall()
     conn.close()
     return campos
@@ -283,7 +319,6 @@ def move_campo(campo_id, direction):
     if not campo:
         conn.close()
         return False
-
     operator = '<' if direction == 'up' else '>'
     order_by = 'DESC' if direction == 'up' else 'ASC'
     cursor.execute(
@@ -297,7 +332,6 @@ def move_campo(campo_id, direction):
     if not neighbor:
         conn.close()
         return False
-
     cursor.execute('UPDATE campos SET ordem = ? WHERE id = ?', (neighbor['ordem'], campo['id']))
     cursor.execute('UPDATE campos SET ordem = ? WHERE id = ?', (campo['ordem'], neighbor['id']))
     conn.commit()

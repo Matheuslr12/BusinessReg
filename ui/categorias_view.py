@@ -6,6 +6,7 @@ from database import (
     delete_categoria,
     get_categoria,
     list_categorias,
+    move_categoria,
     update_categoria,
 )
 
@@ -19,6 +20,7 @@ class CategoriasView(tk.Frame):
         self.on_back = on_back
         self.configure(bg=colors['bg_primary'])
         self.selected_category = None
+        self.categories_data = {}
         self.configure_treeview_style()
         self.create_widgets()
         self.load_categories()
@@ -70,7 +72,7 @@ class CategoriasView(tk.Frame):
         ).pack(anchor='w', pady=(28, 4))
         tk.Label(
             header,
-            text='Organize os campos que serão preenchidos nos cadastros das empresas.',
+            text='Organize os campos e defina a ordem das categorias no menu de cadastros.',
             font=('Segoe UI', 10), fg=self.colors['text_secondary'],
             bg=self.colors['bg_primary']
         ).pack(anchor='w', pady=(0, 22))
@@ -108,13 +110,13 @@ class CategoriasView(tk.Frame):
         )
         table_frame.pack(fill='both', expand=True)
         self.tree = ttk.Treeview(
-            table_frame, columns=('id', 'nome', 'descricao'),
+            table_frame, columns=('ordem', 'nome', 'descricao'),
             show='headings', style='Categorias.Treeview', selectmode='browse'
         )
-        self.tree.heading('id', text='ID')
+        self.tree.heading('ordem', text='ORDEM')
         self.tree.heading('nome', text='NOME DA CATEGORIA')
         self.tree.heading('descricao', text='DESCRIÇÃO')
-        self.tree.column('id', width=80, minwidth=60, anchor='center', stretch=False)
+        self.tree.column('ordem', width=90, minwidth=70, anchor='center', stretch=False)
         self.tree.column('nome', width=300, minwidth=180, anchor='w')
         self.tree.column('descricao', width=500, minwidth=220, anchor='w')
         scrollbar = ttk.Scrollbar(table_frame, orient='vertical', command=self.tree.yview)
@@ -132,12 +134,24 @@ class CategoriasView(tk.Frame):
     def create_actions(self, parent):
         actions = tk.Frame(parent, bg=self.colors['bg_primary'])
         actions.pack(fill='x', pady=(16, 0))
+        self.btn_up = self.create_button(
+            actions, '↑ Mover para cima', self.move_selected_up,
+            self.colors['bg_tertiary'], self.colors['text_primary'],
+            ('Segoe UI', 10, 'bold'), 16, 10, state='disabled'
+        )
+        self.btn_up.pack(side='left')
+        self.btn_down = self.create_button(
+            actions, '↓ Mover para baixo', self.move_selected_down,
+            self.colors['bg_tertiary'], self.colors['text_primary'],
+            ('Segoe UI', 10, 'bold'), 16, 10, state='disabled'
+        )
+        self.btn_down.pack(side='left', padx=(10, 0))
         self.btn_edit = self.create_button(
             actions, '✎ Editar', self.edit_category,
             self.colors['bg_tertiary'], self.colors['text_primary'],
             ('Segoe UI', 10, 'bold'), 20, 10, state='disabled'
         )
-        self.btn_edit.pack(side='left')
+        self.btn_edit.pack(side='left', padx=(18, 0))
         self.btn_delete = self.create_button(
             actions, '🗑 Excluir', self.delete_category,
             self.colors['bg_secondary'], self.colors['text_secondary'],
@@ -153,7 +167,7 @@ class CategoriasView(tk.Frame):
             cursor='hand2' if state == 'normal' else 'arrow', state=state
         )
         if state == 'normal':
-            button.bind('<Enter>', lambda e: e.widget.configure(bg=self.colors['bg_tertiary']))
+            button.bind('<Enter>', lambda e: e.widget.configure(bg=self.colors['accent']))
             button.bind('<Leave>', lambda e: e.widget.configure(bg=background))
         return button
 
@@ -174,29 +188,66 @@ class CategoriasView(tk.Frame):
     def filter_categories(self, event=None):
         self.load_categories(self.get_current_search())
 
-    def load_categories(self, search=''):
+    def load_categories(self, search='', keep_selection=False):
+        previous_selection = self.selected_category if keep_selection else None
         for item in self.tree.get_children():
             self.tree.delete(item)
+
         categorias = list_categorias(search)
+        self.categories_data = {categoria['id']: categoria for categoria in categorias}
         for categoria in categorias:
             self.tree.insert(
                 '', 'end', iid=str(categoria['id']),
-                values=(categoria['id'], categoria['nome'], categoria['descricao'] or '-')
+                values=(categoria['ordem'], categoria['nome'], categoria['descricao'] or '-')
             )
+
         if categorias:
             self.empty_label.place_forget()
         else:
             self.empty_label.place(relx=0.5, rely=0.5, anchor='center')
+
         self.selected_category = None
-        self.btn_edit.configure(state='disabled')
-        self.btn_delete.configure(state='disabled')
+        self.disable_actions()
+
+        if previous_selection and previous_selection in self.categories_data:
+            self.tree.selection_set(str(previous_selection))
+            self.tree.focus(str(previous_selection))
+            self.on_select_category()
 
     def on_select_category(self, event=None):
         selection = self.tree.selection()
-        self.selected_category = selection[0] if selection else None
-        state = 'normal' if self.selected_category else 'disabled'
-        self.btn_edit.configure(state=state)
-        self.btn_delete.configure(state=state)
+        self.selected_category = int(selection[0]) if selection else None
+        self.update_actions_state()
+
+    def update_actions_state(self):
+        if not self.selected_category:
+            self.disable_actions()
+            return
+
+        categorias = list(self.categories_data.values())
+        categorias.sort(key=lambda categoria: (categoria['ordem'], categoria['id']))
+        current_index = next(
+            index for index, categoria in enumerate(categorias)
+            if categoria['id'] == self.selected_category
+        )
+        self.btn_up.configure(state='normal' if current_index > 0 else 'disabled')
+        self.btn_down.configure(state='normal' if current_index < len(categorias) - 1 else 'disabled')
+        self.btn_edit.configure(state='normal')
+        self.btn_delete.configure(state='normal')
+
+    def disable_actions(self):
+        self.btn_up.configure(state='disabled')
+        self.btn_down.configure(state='disabled')
+        self.btn_edit.configure(state='disabled')
+        self.btn_delete.configure(state='disabled')
+
+    def move_selected_up(self):
+        if self.selected_category and move_categoria(self.selected_category, 'up'):
+            self.load_categories(keep_selection=True)
+
+    def move_selected_down(self):
+        if self.selected_category and move_categoria(self.selected_category, 'down'):
+            self.load_categories(keep_selection=True)
 
     def open_add_dialog(self):
         self.open_category_dialog()
@@ -204,7 +255,7 @@ class CategoriasView(tk.Frame):
     def edit_category(self):
         if not self.selected_category:
             return
-        categoria = get_categoria(int(self.selected_category))
+        categoria = get_categoria(self.selected_category)
         if categoria:
             self.open_category_dialog(categoria)
 
@@ -217,29 +268,29 @@ class CategoriasView(tk.Frame):
         dialog.transient(self.winfo_toplevel())
         dialog.grab_set()
 
-        width, height = 500, 410
+        width, height = 410, 370
         parent = self.winfo_toplevel()
         x = parent.winfo_x() + (parent.winfo_width() - width) // 2
         y = parent.winfo_y() + (parent.winfo_height() - height) // 2
         dialog.geometry(f'{width}x{height}+{x}+{y}')
 
         content = tk.Frame(dialog, bg=self.colors['bg_primary'])
-        content.pack(fill='both', expand=True, padx=30, pady=28)
+        content.pack(fill='both', expand=True, padx=28, pady=26)
         tk.Label(
             content, text='Editar categoria' if editing else 'Adicionar categoria',
             font=('Segoe UI', 18, 'bold'), fg=self.colors['text_primary'],
             bg=self.colors['bg_primary']
-        ).pack(anchor='w', pady=(0, 24))
+        ).pack(anchor='w', pady=(0, 20))
 
         nome_var = tk.StringVar(value=categoria['nome'] if editing else '')
         descricao_var = tk.StringVar(value=categoria['descricao'] if editing else '')
         nome_field, nome_entry = self.create_entry_field(content, 'Nome da categoria *', nome_var)
-        nome_field.pack(fill='x', pady=(0, 16))
-        descricao_field, descricao_entry = self.create_entry_field(content, 'Descrição', descricao_var)
+        nome_field.pack(fill='x', pady=(0, 14))
+        descricao_field, _ = self.create_entry_field(content, 'Descrição', descricao_var)
         descricao_field.pack(fill='x')
 
         actions = tk.Frame(content, bg=self.colors['bg_primary'])
-        actions.pack(fill='x', pady=(28, 0))
+        actions.pack(fill='x', pady=(24, 0))
         self.create_button(
             actions, 'Cancelar', dialog.destroy,
             self.colors['bg_secondary'], self.colors['text_secondary'],
@@ -285,7 +336,7 @@ class CategoriasView(tk.Frame):
     def delete_category(self):
         if not self.selected_category:
             return
-        categoria = get_categoria(int(self.selected_category))
+        categoria = get_categoria(self.selected_category)
         if not categoria:
             self.load_categories(self.get_current_search())
             return
