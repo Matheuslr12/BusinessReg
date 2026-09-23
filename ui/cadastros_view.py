@@ -62,7 +62,33 @@ class CadastrosView(tk.Frame):
         self.create_sidebar()
 
     def create_sidebar(self):
-        header = tk.Frame(self.sidebar, bg=self.colors['bg_secondary'])
+        self.sidebar_canvas = tk.Canvas(
+            self.sidebar, bg=self.colors['bg_secondary'],
+            highlightthickness=0, borderwidth=0
+        )
+        sidebar_scrollbar = ttk.Scrollbar(
+            self.sidebar, orient='vertical', command=self.sidebar_canvas.yview
+        )
+        self.sidebar_content = tk.Frame(self.sidebar_canvas, bg=self.colors['bg_secondary'])
+
+        self.sidebar_content.bind(
+            '<Configure>',
+            lambda event: self.sidebar_canvas.configure(scrollregion=self.sidebar_canvas.bbox('all'))
+        )
+        self.sidebar_window = self.sidebar_canvas.create_window(
+            (0, 0), window=self.sidebar_content, anchor='nw'
+        )
+        self.sidebar_canvas.configure(yscrollcommand=sidebar_scrollbar.set)
+        self.sidebar_canvas.bind(
+            '<Configure>',
+            lambda event: self.sidebar_canvas.itemconfigure(self.sidebar_window, width=event.width)
+        )
+
+        self.sidebar_canvas.pack(side='left', fill='both', expand=True)
+        sidebar_scrollbar.pack(side='right', fill='y')
+        self.bind_scroll_events(self.sidebar_content, self.sidebar_canvas)
+
+        header = tk.Frame(self.sidebar_content, bg=self.colors['bg_secondary'])
         header.pack(fill='x', padx=20, pady=(24, 18))
 
         back_button = tk.Button(
@@ -83,10 +109,10 @@ class CadastrosView(tk.Frame):
             fg=self.colors['text_secondary'], bg=self.colors['bg_secondary']
         ).pack(anchor='w', pady=(4, 0))
 
-        separator = tk.Frame(self.sidebar, bg=self.colors['border'], height=1)
+        separator = tk.Frame(self.sidebar_content, bg=self.colors['border'], height=1)
         separator.pack(fill='x', padx=20, pady=(0, 18))
 
-        company_frame = tk.Frame(self.sidebar, bg=self.colors['bg_secondary'])
+        company_frame = tk.Frame(self.sidebar_content, bg=self.colors['bg_secondary'])
         company_frame.pack(fill='x', padx=20)
         tk.Label(
             company_frame, text='EMPRESA', font=('Segoe UI', 9, 'bold'),
@@ -102,12 +128,12 @@ class CadastrosView(tk.Frame):
         self.company_combo.bind('<<ComboboxSelected>>', self.on_company_selected)
 
         tk.Label(
-            self.sidebar, text='CATEGORIAS', font=('Segoe UI', 9, 'bold'),
+            self.sidebar_content, text='CATEGORIAS', font=('Segoe UI', 9, 'bold'),
             fg=self.colors['text_secondary'], bg=self.colors['bg_secondary']
         ).pack(anchor='w', padx=20, pady=(28, 10))
 
-        self.categories_frame = tk.Frame(self.sidebar, bg=self.colors['bg_secondary'])
-        self.categories_frame.pack(fill='both', expand=True, padx=12, pady=(0, 16))
+        self.categories_frame = tk.Frame(self.sidebar_content, bg=self.colors['bg_secondary'])
+        self.categories_frame.pack(fill='x', padx=12, pady=(0, 20))
 
     def refresh_sidebar(self):
         empresas = list_empresas()
@@ -153,7 +179,26 @@ class CadastrosView(tk.Frame):
             button.pack(fill='x', pady=2)
             button.bind('<Enter>', lambda event: self.on_category_hover(event, True))
             button.bind('<Leave>', lambda event: self.on_category_hover(event, False))
+            button.bind('<Enter>', lambda event: self.enable_sidebar_scroll())
+            button.bind('<Leave>', lambda event: self.disable_sidebar_scroll())
             self.category_buttons[categoria['id']] = button
+
+    def bind_scroll_events(self, widget, canvas):
+        widget.bind('<Enter>', lambda event: self.bind_mousewheel(canvas))
+        widget.bind('<Leave>', lambda event: self.unbind_mousewheel())
+
+    def bind_mousewheel(self, canvas):
+        self.unbind_mousewheel()
+        self.bind_all('<MouseWheel>', lambda event: canvas.yview_scroll(int(-event.delta / 120), 'units'))
+
+    def unbind_mousewheel(self):
+        self.unbind_all('<MouseWheel>')
+
+    def enable_sidebar_scroll(self):
+        self.bind_mousewheel(self.sidebar_canvas)
+
+    def disable_sidebar_scroll(self):
+        self.unbind_mousewheel()
 
     def on_category_hover(self, event, entering):
         category_id = next((key for key, value in self.category_buttons.items() if value == event.widget), None)
@@ -215,10 +260,6 @@ class CadastrosView(tk.Frame):
 
         self.bind_scroll_events(scroll_frame, canvas)
         return scroll_frame, canvas
-
-    def bind_scroll_events(self, widget, canvas):
-        widget.bind('<Enter>', lambda event: canvas.bind_all('<MouseWheel>', lambda mouse_event: canvas.yview_scroll(int(-mouse_event.delta / 120), 'units')))
-        widget.bind('<Leave>', lambda event: canvas.unbind_all('<MouseWheel>'))
 
     def show_welcome(self):
         self.clear_content()
