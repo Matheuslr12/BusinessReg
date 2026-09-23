@@ -1,7 +1,11 @@
+import hashlib
+import hmac
+import os
 import sqlite3
 from datetime import datetime
 
 DB_NAME = 'empresas.db'
+PASSWORD_ITERATIONS = 200_000
 
 
 def get_connection():
@@ -14,6 +18,21 @@ def get_connection():
 def column_exists(cursor, table_name, column_name):
     cursor.execute(f'PRAGMA table_info({table_name})')
     return any(column['name'] == column_name for column in cursor.fetchall())
+
+
+def hash_password(password, salt=None):
+    salt = salt or os.urandom(16)
+    password_hash = hashlib.pbkdf2_hmac(
+        'sha256', password.encode('utf-8'), salt, PASSWORD_ITERATIONS
+    )
+    return salt.hex(), password_hash.hex()
+
+
+def verify_password(password, salt_hex, password_hash_hex):
+    password_hash = hashlib.pbkdf2_hmac(
+        'sha256', password.encode('utf-8'), bytes.fromhex(salt_hex), PASSWORD_ITERATIONS
+    )
+    return hmac.compare_digest(password_hash.hex(), password_hash_hex)
 
 
 def init_db():
@@ -71,6 +90,17 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario TEXT NOT NULL UNIQUE,
+            senha_salt TEXT NOT NULL,
+            senha_hash TEXT NOT NULL,
+            papel TEXT NOT NULL DEFAULT 'master',
+            data_criacao TEXT NOT NULL
+        )
+    ''')
+
     cursor.execute('SELECT id FROM categorias WHERE ordem = 0 ORDER BY id')
     for position, categoria in enumerate(cursor.fetchall(), start=1):
         cursor.execute('UPDATE categorias SET ordem = ? WHERE id = ?', (position, categoria['id']))
@@ -89,6 +119,44 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def master_exists():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM usuarios WHERE usuario = 'master' LIMIT 1")
+    exists = cursor.fetchone() is not None
+    conn.close()
+    return exists
+
+
+def create_master_user(password):
+    salt, password_hash = hash_password(password)
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        '''INSERT INTO usuarios (usuario, senha_salt, senha_hash, papel, data_criacao)
+           VALUES ('master', ?, ?, 'master', ?)''',
+        (salt, password_hash, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    )
+    conn.commit()
+    conn.close()
+
+
+def authenticate_user(usuario, password):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        'SELECT usuario, senha_salt, senha_hash, papel FROM usuarios WHERE usuario = ?',
+        (usuario.strip(),)
+    )
+    user = cursor.fetchone()
+    conn.close()
+    if not user:
+        return None
+    if verify_password(password, user['senha_salt'], user['senha_hash']):
+        return {'usuario': user['usuario'], 'papel': user['papel']}
+    return None
 
 
 def create_empresa(nome, localizacao=''):
@@ -205,21 +273,17 @@ def move_categoria(categoria_id, direction):
     if not categoria:
         conn.close()
         return False
-
     operator = '<' if direction == 'up' else '>'
     order_by = 'DESC' if direction == 'up' else 'ASC'
     cursor.execute(
         f'''SELECT id, ordem FROM categorias
-            WHERE ordem {operator} ?
-            ORDER BY ordem {order_by}, id {order_by}
-            LIMIT 1''',
+            WHERE ordem {operator} ? ORDER BY ordem {order_by}, id {order_by} LIMIT 1''',
         (categoria['ordem'],)
     )
     neighbor = cursor.fetchone()
     if not neighbor:
         conn.close()
         return False
-
     cursor.execute('UPDATE categorias SET ordem = ? WHERE id = ?', (neighbor['ordem'], categoria['id']))
     cursor.execute('UPDATE categorias SET ordem = ? WHERE id = ?', (categoria['ordem'], neighbor['id']))
     conn.commit()
@@ -268,8 +332,7 @@ def list_campos(search=''):
         cursor.execute(
             '''SELECT campos.id, campos.categoria_id, campos.nome, campos.ordem,
                       categorias.nome AS categoria_nome
-               FROM campos
-               INNER JOIN categorias ON categorias.id = campos.categoria_id
+               FROM campos INNER JOIN categorias ON categorias.id = campos.categoria_id
                WHERE campos.nome LIKE ? OR categorias.nome LIKE ?
                ORDER BY categorias.ordem, campos.ordem, campos.id''',
             (termo, termo)
@@ -278,8 +341,7 @@ def list_campos(search=''):
         cursor.execute(
             '''SELECT campos.id, campos.categoria_id, campos.nome, campos.ordem,
                       categorias.nome AS categoria_nome
-               FROM campos
-               INNER JOIN categorias ON categorias.id = campos.categoria_id
+               FROM campos INNER JOIN categorias ON categorias.id = campos.categoria_id
                ORDER BY categorias.ordem, campos.ordem, campos.id'''
         )
     campos = cursor.fetchall()
@@ -324,8 +386,7 @@ def move_campo(campo_id, direction):
     cursor.execute(
         f'''SELECT id, ordem FROM campos
             WHERE categoria_id = ? AND ordem {operator} ?
-            ORDER BY ordem {order_by}, id {order_by}
-            LIMIT 1''',
+            ORDER BY ordem {order_by}, id {order_by} LIMIT 1''',
         (campo['categoria_id'], campo['ordem'])
     )
     neighbor = cursor.fetchone()
@@ -352,8 +413,7 @@ def get_valores_empresa_categoria(empresa_id, categoria_id):
     cursor = conn.cursor()
     cursor.execute(
         '''SELECT valores_campos.campo_id, valores_campos.valor
-           FROM valores_campos
-           INNER JOIN campos ON campos.id = valores_campos.campo_id
+           FROM valores_campos INNER JOIN campos ON campos.id = valores_campos.campo_id
            WHERE valores_campos.empresa_id = ? AND campos.categoria_id = ?''',
         (empresa_id, categoria_id)
     )
@@ -371,14 +431,8 @@ def save_valores_empresa(empresa_id, valores):
             '''INSERT INTO valores_campos (empresa_id, campo_id, valor, data_atualizacao)
                VALUES (?, ?, ?, ?)
                ON CONFLICT(empresa_id, campo_id)
-               DO UPDATE SET valor = excluded.valor,
-                             data_atualizacao = excluded.data_atualizacao''',
+               DO UPDATE SET valor = excluded.valor, data_atualizacao = excluded.data_atualizacao''',
             (empresa_id, campo_id, valor.strip(), data_atualizacao)
         )
     conn.commit()
     conn.close()
-
-
-if __name__ == '__main__':
-    init_db()
-    print('Banco de dados inicializado com sucesso!')

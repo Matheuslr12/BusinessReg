@@ -6,10 +6,11 @@ from ui.config_view import ConfigView
 from ui.empresas_view import EmpresasView
 from ui.categorias_view import CategoriasView
 from ui.campos_view import CamposView
+from ui.login_view import LoginView
 
 
 class MainWindow(tk.Tk):
-    """Janela principal com navegação entre telas."""
+    """Janela principal com autenticação e navegação entre telas."""
 
     COLORS = {
         'bg_primary': '#1a1a2e',
@@ -28,8 +29,10 @@ class MainWindow(tk.Tk):
         self.minsize(800, 600)
         self.configure(bg=self.COLORS['bg_primary'])
         self.current_view = None
+        self.current_user = None
+
         self.create_views()
-        self.show_menu()
+        self.show_login()
         self.center_window()
 
     def center_window(self):
@@ -41,6 +44,7 @@ class MainWindow(tk.Tk):
         self.geometry(f'{width}x{height}+{x}+{y}')
 
     def create_views(self):
+        self.login_view = LoginView(self, self.COLORS, self.on_authenticated)
         self.menu_view = MenuView(self, self.COLORS, self.navigate)
         self.cadastros_view = CadastrosView(self, self.COLORS, self.show_menu)
         self.gerenciamento_view = GerenciamentoView(
@@ -51,12 +55,25 @@ class MainWindow(tk.Tk):
         self.categorias_view = CategoriasView(self, self.COLORS, self.show_gerenciamento)
         self.campos_view = CamposView(self, self.COLORS, self.show_gerenciamento)
 
+    def on_authenticated(self, user):
+        self.current_user = user
+        self.show_menu()
+
     def refresh_view(self, view):
         refresh_method = getattr(view, 'refresh_view', None)
         if callable(refresh_method):
             refresh_method()
 
+    def show_login(self):
+        self.hide_all()
+        self.login_view.show_screen()
+        self.login_view.pack(fill='both', expand=True)
+        self.current_view = 'login'
+
     def navigate(self, screen):
+        if not self.current_user:
+            self.show_login()
+            return
         self.hide_all()
         if screen == 'cadastros':
             self.refresh_view(self.cadastros_view)
@@ -70,6 +87,9 @@ class MainWindow(tk.Tk):
             self.current_view = 'configuracoes'
 
     def navigate_submenu(self, screen):
+        if not self.current_user:
+            self.show_login()
+            return
         self.hide_all()
         if screen == 'empresas':
             self.refresh_view(self.empresas_view)
@@ -85,17 +105,24 @@ class MainWindow(tk.Tk):
             self.current_view = 'campos'
 
     def show_menu(self):
+        if not self.current_user:
+            self.show_login()
+            return
         self.hide_all()
         self.menu_view.pack(fill='both', expand=True)
         self.current_view = 'menu'
 
     def show_gerenciamento(self):
+        if not self.current_user:
+            self.show_login()
+            return
         self.hide_all()
         self.gerenciamento_view.pack(fill='both', expand=True)
         self.current_view = 'gerenciamento'
 
     def hide_all(self):
         for view in [
+            self.login_view,
             self.menu_view,
             self.cadastros_view,
             self.gerenciamento_view,
