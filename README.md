@@ -1,24 +1,26 @@
-# Amicom - Registro de Empresas
+# Amicom - Sistema Integrado de Informações
 
-Aplicativo Python para registrar e gerenciar informacoes de empresas de forma pratica.
+Aplicativo Python para organizar empresas, categorias, campos e informações cadastradas de forma prática.
 
 ## Funcionalidades
 
-- Cadastrar novas empresas
-- Editar informacoes
-- Excluir empresas
-- Buscar e listar empresas
-- Armazenamento em SQLite
+- Gerenciar empresas e suas localizações
+- Criar categorias para organizar informações
+- Criar campos vinculados a cada categoria
+- Definir a ordem de categorias e campos
+- Preencher e salvar informações por empresa
+- Buscar, editar e excluir registros
+- Armazenamento local em SQLite
 
 ## Tecnologias
 
 - Python 3.x
 - SQLite
-- Tkinter (interface grafica)
+- Tkinter (interface gráfica)
 
 ## Como usar
 
-1. Clone o repositorio
+1. Clone o repositório
 2. Execute `python main.py`
 
 ## Estrutura do Projeto
@@ -26,7 +28,7 @@ Aplicativo Python para registrar e gerenciar informacoes de empresas de forma pr
 ```
 BusinessReg/
 ├── main.py          # Arquivo principal
-├── database.py      # Configuracao do banco de dados
-├── models.py        # Modelo de dados
-└── README.md        # Este arquivo
+├── database.py      # Banco de dados e operações SQLite
+├── ui/              # Telas da interface gráfica
+└── README.md        # Documentação do projeto
 ```

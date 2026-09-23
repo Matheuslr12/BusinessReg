@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Amicom - Sistema de Registro de Empresas."""
+"""Amicom - Sistema Integrado de Informações."""
 
 from database import init_db
 from ui.main_window import MainWindow
